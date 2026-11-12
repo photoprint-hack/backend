@@ -13,3 +13,7 @@ __pycache__
 .coverage
 htmlcov
 .DS_Store
+
+# Local reports are not part of a release build context.
+BACKEND_STATUS.md
+TEST_REPORT.md

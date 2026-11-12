@@ -35,14 +35,14 @@ async def begin(db, user, key, operation, payload):
     return existing, digest
 
 
-def remember(db, user, key, operation, digest, response):
+def remember(db, user, key, operation, digest, response, *, status_code=201):
     db.add(
         IdempotencyKey(
             user_id=user.id,
             operation=operation,
             idempotency_key=key,
             request_hash=digest,
-            response_status=201,
+            response_status=status_code,
             response_body=jsonable_encoder(response),
             expires_at=datetime.now(UTC) + timedelta(hours=24),
         )

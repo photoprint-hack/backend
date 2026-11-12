@@ -5,6 +5,7 @@ from datetime import date
 from app.seed.context import create_context
 from app.seed.context import identifier as identifier
 from app.seed.stages.catalog import seed_catalog
+from app.seed.stages.impact import seed_impact
 from app.seed.stages.orders import seed_orders
 from app.seed.stages.plans import seed_plans
 from app.seed.stages.sources import seed_sources
@@ -20,4 +21,5 @@ async def seed(db, *, passwords: dict[str, str], reference: date | None = None, 
     await seed_plans(ctx)
     await seed_sources(ctx)
     await seed_workflow(ctx)
+    await seed_impact(ctx)
     return {"inserted": ctx.inserted, "reference_date": ctx.reference}

@@ -61,3 +61,6 @@ __all__ = [
     "DecisionHistory",
     "Task",
 ]
+
+# Register additive v2 tables with Alembic metadata.
+from app.models import impact as impact  # noqa: E402

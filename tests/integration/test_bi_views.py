@@ -1,13 +1,14 @@
 import re
 from datetime import date
-from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 
 
-async def test_bi_native_questions_respect_manager_scope_and_match_api(client, database, seeded):
+async def test_bi_native_questions_respect_manager_scope_and_match_api(
+    client, database, seeded, project_root
+):
     manager = await client.post(
         "/api/v1/auth/login", json={"email": "manager@fotoprint.demo", "password": "SeedPassword123!"}
     )
@@ -19,7 +20,7 @@ async def test_bi_native_questions_respect_manager_scope_and_match_api(client, d
         "department_id": dashboard["filters"]["department_id"],
         "product_id": "all",
     }
-    raw = (Path(__file__).parents[1] / "bi/questions.sql").read_text()
+    raw = (project_root / "bi/questions.sql").read_text()
     queries = [part.strip() for part in re.sub(r"--[^\n]*", "", raw).split(";") if part.strip()]
     async with database() as db:
         results = []
@@ -41,7 +42,7 @@ async def test_bi_native_questions_respect_manager_scope_and_match_api(client, d
         assert sum(row["revenue"] for row in company) > sum(row["revenue"] for row in results[0])
 
 
-async def test_readonly_bi_role_cannot_read_auth_tables(database, seeded):
+async def test_readonly_bi_role_cannot_read_auth_tables(database, seeded_database, project_root):
     async with database() as db:
         privileged = await db.scalar(text("SELECT rolcreaterole FROM pg_roles WHERE rolname=current_user"))
         if not privileged:
@@ -50,7 +51,7 @@ async def test_readonly_bi_role_cannot_read_auth_tables(database, seeded):
             pytest.skip("Temporary DB role creation is unavailable to this test account")
         role = "test_bi_" + uuid4().hex
         schema = await db.scalar(text("SELECT current_schema()"))
-        script = (Path(__file__).parents[1] / "bi/setup_readonly.sql").read_text()
+        script = (project_root / "bi/setup_readonly.sql").read_text()
         script = "\n".join(
             line
             for line in script.splitlines()

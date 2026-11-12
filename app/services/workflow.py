@@ -28,6 +28,10 @@ from app.services.serialization import columns
 
 
 async def scoped(db, model, identifier, user, lock=False):
+    if lock and model is Task:
+        from sqlalchemy import text
+
+        await db.execute(text("SELECT pg_advisory_xact_lock(178901235)"))
     stmt = scope_statement(select(model).where(model.id == identifier), model, user)
     if model is Task:
         stmt = stmt.where(Task.deleted_at.is_(None))
@@ -354,6 +358,10 @@ async def patch(db, model, obj, payload, user, request):
         details={"comment": comment} if comment else None,
         request=request,
     )
+    if model is Task:
+        from app.services.impact.actions import sync_task
+
+        await sync_task(db, obj, user, request, old)
     return obj
 
 

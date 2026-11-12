@@ -1,10 +1,9 @@
 import csv
 import json
-from pathlib import Path
 
 
-async def test_all_supplied_json_and_csv_samples_import_and_replay(client, minimal_admin):
-    root = Path(__file__).parents[1] / "data/mock"
+async def test_all_supplied_json_and_csv_samples_import_and_replay(client, minimal_admin, project_root):
+    root = project_root / "data/mock"
     for source in ["crm", "erp", "finance", "support", "hr"]:
         payload = json.loads((root / (source + ".json")).read_text())
         with (root / (source + ".csv")).open(newline="") as stream:

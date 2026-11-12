@@ -32,3 +32,7 @@ api_router.include_router(imports_router)
 
 api_router.include_router(audit_router)
 api_router.include_router(bi_router)
+
+from app.api.v1.impact import router as impact_router  # noqa: E402
+
+api_router.include_router(impact_router)

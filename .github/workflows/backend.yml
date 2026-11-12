@@ -36,11 +36,16 @@ jobs:
         run: |
           python -m pip install uv==0.11.6
           uv sync --frozen
-      - name: Lint and test
+      - name: Lint
         run: |
           uv run ruff check app scripts tests
           uv run ruff format --check app scripts tests
-          uv run pytest -q
+      - name: Unit tests
+        run: uv run pytest -q tests/unit
+      - name: API tests
+        run: uv run pytest -q tests/api
+      - name: Integration tests
+        run: uv run pytest -q tests/integration
       - name: Check exported production contract
         run: |
           uv run python scripts/export_openapi.py --output /tmp/openapi.json

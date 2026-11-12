@@ -20,6 +20,7 @@ os.environ["COOKIE_SAMESITE"] = "lax"
 os.environ["FRONTEND_URL"] = "http://localhost:5173"
 os.environ["BACKEND_URL"] = "http://localhost:8000"
 os.environ["REPORT_TIMEZONE"] = "Europe/Minsk"
+os.environ["OPENROUTER_API_KEY"] = ""
 os.environ["METABASE_URL"] = ""
 os.environ["METABASE_DASHBOARD_IDS"] = "{}"
 os.environ["METABASE_VERIFIED_DASHBOARDS"] = "[]"
@@ -30,8 +31,13 @@ from app.db.session import get_db  # noqa: E402 -- Override local settings befor
 from app.main import app  # noqa: E402
 
 
+@pytest.fixture(scope="session")
+def project_root():
+    return Path(__file__).resolve().parents[1]
+
+
 @pytest_asyncio.fixture
-async def database():
+async def database(project_root):
     raw = os.environ.get("TEST_DATABASE_URL")
     if not raw:
         pytest.skip("TEST_DATABASE_URL is not configured; PostgreSQL integration not run")
@@ -44,7 +50,7 @@ async def database():
     async with bootstrap.begin() as conn:
         await conn.execute(text(f'CREATE SCHEMA "{schema}"'))
     engine = create_async_engine(config.db_url(), connect_args={"server_settings": {"search_path": schema}})
-    migration_path = Path(__file__).parents[1] / "alembic/versions/20261112_01_domain.py"
+    migration_path = project_root / "alembic/versions/20261112_01_domain.py"
     spec = importlib.util.spec_from_file_location("domain_revision", migration_path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -56,11 +62,19 @@ async def database():
                     module.upgrade()
                     views_spec = importlib.util.spec_from_file_location(
                         "bi_views_revision",
-                        Path(__file__).parents[1] / "alembic/versions/20261112_02_bi_views.py",
+                        project_root / "alembic/versions/20261112_02_bi_views.py",
                     )
                     views = importlib.util.module_from_spec(views_spec)
                     views_spec.loader.exec_module(views)
                     views.upgrade()
+                    for number in ("03", "04", "05"):
+                        extra_spec = importlib.util.spec_from_file_location(
+                            "impact_revision_" + number,
+                            project_root / f"alembic/versions/20261112_{number}_impact.py",
+                        )
+                        extra = importlib.util.module_from_spec(extra_spec)
+                        extra_spec.loader.exec_module(extra)
+                        extra.upgrade()
 
             await conn.run_sync(migrate)
         factory = async_sessionmaker(engine, expire_on_commit=False)
@@ -91,13 +105,17 @@ async def client(database):
 
 
 @pytest_asyncio.fixture
-async def seeded(database, client):
+async def seeded_database(database):
     from app.seed.service import seed
 
     passwords = {role: "SeedPassword123!" for role in ["admin", "director", "manager", "analyst", "employee"]}
     async with database() as db:
         await seed(db, passwords=passwords)
         await db.commit()
+
+
+@pytest_asyncio.fixture
+async def seeded(seeded_database, client):
     response = await client.post(
         "/api/v1/auth/login", json={"email": "director@fotoprint.demo", "password": "SeedPassword123!"}
     )

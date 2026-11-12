@@ -38,13 +38,15 @@ def create_app() -> FastAPI:
         title=config.app_name,
         version=config.app_version,
         lifespan=lifespan,
-        responses={status: {"model": ErrorEnvelope} for status in [400, 401, 403, 404, 409, 422, 500, 503]},
+        responses={
+            status: {"model": ErrorEnvelope} for status in [400, 401, 403, 404, 409, 422, 429, 500, 503]
+        },
     )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[config.frontend_url],
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PATCH", "PUT", "DELETE", "OPTIONS"],
         allow_headers=["Authorization", "Content-Type", "Idempotency-Key", "X-Request-ID"],
         expose_headers=["X-Request-ID", "Idempotency-Replayed"],
     )

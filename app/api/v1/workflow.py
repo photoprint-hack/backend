@@ -233,6 +233,19 @@ async def patch_task(identifier: UUID, payload: TaskPatch, request: Request, db:
 async def archive_task(identifier: UUID, request: Request, db: DB, user: CurrentUser):
     require_role(user, {"admin"})
     obj = await workflow.scoped(db, Task, identifier, user, lock=True)
+    from app.models.impact import ManagementAction
+    from app.services.impact.actions import TERMINAL, event, touch
+
+    for action in (
+        await db.scalars(
+            select(ManagementAction).where(
+                ManagementAction.task_id == obj.id, ManagementAction.status.not_in(TERMINAL)
+            )
+        )
+    ).all():
+        action.status = "cancelled"
+        touch(action)
+        event(db, action, "cancel", user, request, details={"reason": "task.archived"})
     obj.deleted_at = datetime.now(UTC)
     audit.record(
         db, "task.archived", "task", actor=user, object_id=obj.id, object_name=obj.title, request=request

@@ -75,6 +75,15 @@ async def reset(payload: Reset, request: Request, db: DB, user: CurrentUser):
     }
     if any(len(value) < 12 for value in passwords.values()):
         raise ApiError(409, "DEMO_CONFIGURATION_INCOMPLETE", "Для восстановления задайте DEMO_*_PASSWORD")
+    from app.models.impact import ManagementAction
+    from app.services.impact.actions import TERMINAL, event, touch
+
+    for action in (
+        await db.scalars(select(ManagementAction).where(ManagementAction.status.not_in(TERMINAL)))
+    ).all():
+        action.status = "cancelled"
+        touch(action)
+        event(db, action, "cancel", user, request, details={"reason": "demo.reset"})
     now = datetime.now(UTC)
     archived = 0
     cancelled = 0

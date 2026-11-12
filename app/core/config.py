@@ -1,3 +1,4 @@
+from datetime import date
 from functools import lru_cache
 from typing import Literal
 from zoneinfo import ZoneInfo
@@ -33,6 +34,29 @@ class Settings(BaseSettings):
     metabase_embedding_secret: SecretStr | None = None
     metabase_dashboard_ids: dict[str, int] = {}
     metabase_verified_dashboards: list[str] = []
+    ai_provider: Literal["openrouter"] = "openrouter"
+    openrouter_api_key: SecretStr | None = None
+    openrouter_model: str = "openrouter/free"
+    ai_timeout_seconds: int = 30
+    ai_cache_ttl_seconds: int = 900
+    ai_daily_budget: int = 40
+    business_holidays: list[date] = []
+    worker_poll_seconds: int = 10
+
+    @field_validator("openrouter_model")
+    @classmethod
+    def free_model_only(cls, value: str) -> str:
+        if value != "openrouter/free" and not value.endswith(":free"):
+            raise ValueError("Only explicitly free OpenRouter models are allowed")
+        return value
+
+    @field_validator("ai_timeout_seconds", "ai_cache_ttl_seconds", "ai_daily_budget", "worker_poll_seconds")
+    @classmethod
+    def positive_limit(cls, value: int) -> int:
+        if not 1 <= value <= 86400:
+            raise ValueError("Expected a positive bounded limit")
+        return value
+
     test_database_url: SecretStr | None = None
 
     demo_admin_password: SecretStr | None = None

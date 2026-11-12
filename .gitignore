@@ -23,3 +23,7 @@ docs/
 .ruff_cache/
 .coverage
 htmlcov/
+
+# Local status and verification reports
+/BACKEND_STATUS.md
+/TEST_REPORT.md

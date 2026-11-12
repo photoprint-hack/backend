@@ -23,6 +23,7 @@ from app.models import (
     User,
 )
 from app.services import audit
+from app.services.order_links import OrderDealLinkError, validate_pair
 from app.services.serialization import columns
 
 
@@ -123,20 +124,18 @@ async def create(db, model, payload, user, request):
                 raise ApiError(404, "RESOURCE_NOT_FOUND", "Клиент недоступен")
         if data.get("campaign_id") and not await db.get(Campaign, data["campaign_id"]):
             raise ApiError(422, "VALIDATION_ERROR", "Кампания не найдена")
-        if data.get("crm_deal_id"):
-            deal = await scoped(db, Deal, data["crm_deal_id"], user)
-            if (
-                deal.customer_id != customer.id
-                or deal.department_id != department
-                or deal.order_id is not None
-            ):
-                raise ApiError(422, "VALIDATION_ERROR", "Сделка не соответствует заказу")
         obj = Order(
             **data,
             order_number="FP-" + uuid4().hex.upper()[:16],
             standard_hours_per_unit=product.standard_hours_per_unit,
             status="new",
         )
+        if obj.crm_deal_id:
+            deal = await scoped(db, Deal, obj.crm_deal_id, user)
+            try:
+                await validate_pair(db, obj, deal)
+            except OrderDealLinkError as exc:
+                raise ApiError(422, "VALIDATION_ERROR", str(exc)) from None
     elif model is Decision:
         future_deadline(data["deadline"])
         await assignee(db, data["owner_id"], department)

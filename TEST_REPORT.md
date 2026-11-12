@@ -8,7 +8,7 @@ Final command:
 uv run --python 3.12 --no-project --with pgserver python scripts/test_postgres.py -q
 ```
 
-Result: **54 passed in 44.11s**, no skips. The helper launched a fresh temporary PostgreSQL and removed it afterwards. Application and tests used Python 3.13; Python 3.12 was used only to host pgserver. The configured remote database was not used.
+Result: **84 passed in 49.87s**, no skips. The helper launched a fresh temporary PostgreSQL and removed it afterwards. Application and tests used Python 3.13; Python 3.12 was used only to host pgserver. The configured remote database was not used.
 
 Coverage includes:
 
@@ -31,6 +31,14 @@ Also passed: Ruff lint/format, compileall, Bash syntax for start.sh, `git diff -
 Large schemas/models were split into domain packages; seed now coordinates six stages with a shared context. Existing import facades remain available. PostgreSQL table/index SQL was compared before/after: all 29 definitions are identical. OpenAPI was compared in full: the only change is the user-approved nullable `CampaignOut.budget`.
 
 Manager sees campaigns linked to their department, including shared campaigns, with `budget=null`. Other authorized roles retain the global budget. New integration tests verify this scope, the hidden budget, and that an own-department support record does not grant access to a linked foreign-department order. Passwords are excluded from seed-context representation.
+
+## Checkpoint, integrity fixes and shell launchers
+
+- Local checkpoint commit `6a1277c` (`feat: add Photoprint MVP backend`) saved the reviewed MVP. Five CSV samples were normalized to LF and compared with JSON; sample import/replay passed. Local environment secrets and ignored coordination files were excluded. No push was performed.
+- Shared order/deal validation now checks customer, department, optional deal product and occupied links in both directions. API failures return 422. Import failures reject only the bad record; accepted records remain committed. Updates and reverse-only references cannot bypass the checks by omitting the direct reference. Valid replay and updates remain supported.
+- Failed independent audit writes emit a safe structured ERROR with request ID and original HTTP status. Tests force audit commit failures for 403/409/422 and verify unchanged API refusals and absence of credential/exception contents in responses and logs.
+- Five executable wrappers in `sh/` call the existing seed/import/export/start/test entrypoints. Tests use a fake uv process from another cwd to verify arguments (including spaces/metacharacters) and exit-status propagation, without executing real seed, imports or migrations.
+- Final full suite: 84 passed in 49.87s on temporary PostgreSQL, no skips. Ruff lint/format, unchanged production OpenAPI re-export, Bash syntax for all wrappers, compileall and diff checks passed. No schema changes or migrations were introduced.
 
 ## Prepared, not verified in the target environment
 

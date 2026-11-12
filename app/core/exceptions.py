@@ -1,3 +1,4 @@
+import logging
 from uuid import UUID, uuid4
 
 from fastapi import Request
@@ -122,4 +123,7 @@ async def failure_audit(request: Request, status: int, code: str):
             await db.commit()
     except Exception:
         # Denial never becomes success if its independent audit cannot be saved.
-        pass
+        logging.getLogger("photoprint.audit").error(
+            "Failure audit could not be persisted",
+            extra={"request_id": str(getattr(request.state, "request_id", "")), "status_code": status},
+        )

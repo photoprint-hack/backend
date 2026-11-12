@@ -26,6 +26,7 @@ from app.models import (
     SupportInteraction,
 )
 from app.services import analytics, audit
+from app.services.order_links import OrderDealLinkError, validate_import_links
 from app.services.serialization import columns
 
 REGISTRY = {
@@ -190,15 +191,6 @@ async def normalize(db, model, data, event_at):
     if model is Deal:
         if result.get("stage") == "won" and not result.get("order_id"):
             raise RecordError("broken_relations", "Выигранная сделка должна быть связана с заказом")
-        if result.get("order_id"):
-            linked = await db.get(Order, result["order_id"])
-            if (
-                linked.customer_id != result["customer_id"]
-                or linked.department_id != result["department_id"]
-                or result.get("product_id")
-                and linked.product_id != result["product_id"]
-            ):
-                raise RecordError("broken_relations", "Сделка не соответствует связанному заказу")
     order_id = result.get("order_id")
     if order_id and model in {FinanceRecord, ProductionRecord, SupportInteraction}:
         order = await db.get(Order, order_id)
@@ -291,6 +283,10 @@ async def import_records(db, source, records, user, request=None):
                             "broken_relations", "Исходная запись указывает на отсутствующий объект"
                         )
                     before = columns(obj) if obj else None
+                    try:
+                        await validate_import_links(db, model, values, obj)
+                    except OrderDealLinkError as exc:
+                        raise RecordError("broken_relations", str(exc)) from None
                     if obj:
                         if (
                             model is Order

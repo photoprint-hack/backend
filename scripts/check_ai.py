@@ -8,9 +8,9 @@ from uuid import uuid4
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.core.config import get_settings  # noqa: E402
-from app.core.exceptions import ApiError  # noqa: E402
-from app.services.impact import provider  # noqa: E402
+from app.core.config import get_settings
+from app.core.exceptions import ApiError
+from app.services.impact import provider
 
 
 async def main(live=False):

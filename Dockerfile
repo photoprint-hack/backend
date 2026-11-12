@@ -17,7 +17,6 @@ COPY app ./app
 COPY alembic ./alembic
 COPY alembic.ini ./
 COPY scripts ./scripts
-COPY bi ./bi
 COPY data ./data
 USER appuser
 EXPOSE 8000

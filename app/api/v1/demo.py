@@ -8,6 +8,7 @@ from sqlalchemy import select, text
 from app.api.deps import DB, CurrentUser
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
+from app.core.locks import RECALCULATION
 from app.core.permissions import require_role
 from app.models import (
     Alert,
@@ -51,7 +52,7 @@ async def reset(payload: Reset, request: Request, db: DB, user: CurrentUser):
     require_role(user, {"admin"})
     if not config.demo_mode:
         raise ApiError(403, "AUTH_FORBIDDEN", "Демонстрационный сброс отключён")
-    await db.execute(text("SELECT pg_advisory_xact_lock(178901234)"))
+    await db.execute(text(f"SELECT pg_advisory_xact_lock({RECALCULATION})"))
     # Refuse to erase or reinterpret unknown source data, even in a development database.
     provenances = (await db.scalars(select(SourceRecord))).all()
     trusted = {

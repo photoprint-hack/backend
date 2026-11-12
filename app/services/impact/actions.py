@@ -2,10 +2,12 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from uuid import NAMESPACE_URL, UUID, uuid5
 
+from fastapi.encoders import jsonable_encoder
 from sqlalchemy import select, text
 
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
+from app.core.locks import WORKFLOW_ACTION
 from app.core.permissions import WRITE_ROLES, department_scope, require_role
 from app.models import Alert, Decision, Order, Task
 from app.models.impact import ManagementAction
@@ -13,6 +15,7 @@ from app.schemas.impact import ActionOut
 from app.schemas.workflow.tasks import TaskCreate, TaskPatch
 from app.services import analytics, audit, workflow
 from app.services.impact import calendar, responsibility
+from app.services.impact.graph import digest
 from app.services.serialization import columns
 
 TERMINAL = {"verified", "rejected", "cancelled"}
@@ -41,7 +44,7 @@ def statement(user):
 
 async def get(db, identifier, user, lock=False):
     if lock:
-        await db.execute(text("SELECT pg_advisory_xact_lock(178901235)"))
+        await db.execute(text(f"SELECT pg_advisory_xact_lock({WORKFLOW_ACTION})"))
     stmt = statement(user).where(ManagementAction.id == identifier)
     if lock:
         stmt = stmt.with_for_update()
@@ -53,8 +56,6 @@ async def get(db, identifier, user, lock=False):
 
 def event(db, obj, name, user=None, request=None, old=None, details=None):
     if user is None and request is None:
-        from app.services.impact.graph import digest
-
         job_id = uuid5(
             NAMESPACE_URL, f"photoprint:impact-job:{obj.id}:{name}:{obj.assignment_cycle}:{digest(details)}"
         )
@@ -199,8 +200,6 @@ async def create(db, payload, user, request):
             raise ApiError(422, "VALIDATION_ERROR", "Задача из другой области")
     if payload.type != "task" and (payload.task_id or payload.execution_due_at):
         raise ApiError(422, "VALIDATION_ERROR", "Срок исполнения и Task задаются только поручению")
-    from fastapi.encoders import jsonable_encoder
-
     obj = ManagementAction(
         **payload.model_dump(exclude={"context", "source_ref", "assignee_id", "execution_due_at"}),
         context=jsonable_encoder(context),
@@ -257,25 +256,213 @@ async def task_for_update(db, obj):
     return task
 
 
-async def command(db, obj, name, payload, user, request):
-    from app.services.impact.notifications import enqueue, escalate
+PERMITTED_FIELDS = {
+    "send": set(),
+    "acknowledge": set(),
+    "start": set(),
+    "resolve": {"result", "result_refs"},
+    "verify": {"verification_note"},
+    "reject": {"reason"},
+    "cancel": {"reason"},
+    "reassign": {"reason", "assignee_id"},
+    "change-deadline": {"reason", "execution_due_at", "response_due_at"},
+    "request-change": {"reason", "assignee_id", "execution_due_at", "response_due_at"},
+    "escalate": {"reason", "assignee_id"},
+}
 
+
+async def _send(db, obj, user, request, task, now):
+    if obj.status != "draft":
+        raise ApiError(409, "INVALID_STATUS_TRANSITION", "Отправляется только черновик")
+    if not obj.assignee_id:
+        raise ApiError(422, "RESPONSIBLE_NOT_CONFIGURED", "Назначьте ответственного")
+    await responsibility.recipient(db, obj.assignee_id, obj.department_id)
+    await workflow.active_department(db, obj.department_id)
+    await workflow.validate_links(db, user, obj.department_id, obj.decision_id, obj.alert_id, obj.order_id)
+    if obj.type == "task":
+        if task:
+            # Serialize competing associations even when their action rows differ.
+            linked = await db.scalar(
+                select(ManagementAction.id).where(
+                    ManagementAction.task_id == task.id,
+                    ManagementAction.id != obj.id,
+                    ManagementAction.status.not_in(TERMINAL | {"draft"}),
+                )
+            )
+            if (
+                task.status not in {"new", "in_progress"}
+                or task.department_id != obj.department_id
+                or task.assignee_id != obj.assignee_id
+                or linked
+            ):
+                raise ApiError(422, "VALIDATION_ERROR", "Задача не подходит для поручения")
+        else:
+            if not obj.planned_deadline:
+                raise ApiError(422, "VALIDATION_ERROR", "Укажите срок исполнения")
+            task = await workflow.create(
+                db,
+                Task,
+                TaskCreate(
+                    title=obj.title,
+                    description=obj.text,
+                    assignee_id=obj.assignee_id,
+                    department_id=obj.department_id,
+                    deadline=obj.planned_deadline,
+                    priority=obj.priority,
+                    decision_id=obj.decision_id,
+                    alert_id=obj.alert_id,
+                    order_id=obj.order_id,
+                ),
+                user,
+                request,
+            )
+            obj.task_id = task.id
+    obj.status, obj.sent_at = "sent", now
+    obj.assignment_cycle += 1
+    obj.response_due_at = calendar.add_working_minutes(
+        now, calendar.RESPONSE_MINUTES[obj.priority], get_settings().business_holidays
+    )
+    obj.calendar_version = calendar.version(get_settings().business_holidays)
+    from app.services.impact.notifications import enqueue
+
+    await enqueue(db, obj, obj.assignee_id, "action_sent", f"send:{obj.assignment_cycle}")
+
+
+def _acknowledge(obj, now):
+    if obj.status not in {"sent", "in_progress", "resolved"} or obj.acknowledged_at:
+        raise ApiError(409, "INVALID_STATUS_TRANSITION", "Подтверждение недоступно")
+    obj.acknowledged_at = now
+    if obj.status == "sent":
+        obj.status = "acknowledged"
+
+
+async def _start_resolve(db, obj, payload, user, request, task, name, now):
+    if obj.status not in (
+        {"acknowledged"} if name == "start" else {"acknowledged", "in_progress", "resolved"}
+    ):
+        raise ApiError(409, "INVALID_STATUS_TRANSITION", "Сначала подтвердите получение")
+    if name == "resolve":
+        if obj.status == "resolved" and obj.result:
+            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Результат уже сообщён")
+        if not payload.result:
+            raise ApiError(422, "VALIDATION_ERROR", "Укажите результат")
+        await validate_refs(db, user, obj.department_id, payload.result_refs)
+        obj.result, obj.result_refs = payload.result, [r.model_dump() for r in payload.result_refs]
+        obj.resolved_at = now
+    if task:
+        # Existing workflow forbids new -> completed; perform the ordinary start first.
+        if task.status == "new":
+            await workflow.patch(
+                db, Task, task, TaskPatch(version=task.version, status="in_progress"), user, request
+            )
+        if name == "resolve" and task.status == "in_progress":
+            await workflow.patch(
+                db, Task, task, TaskPatch(version=task.version, status="completed"), user, request
+            )
+        if task.status not in ({"in_progress"} if name == "start" else {"completed"}):
+            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Задача не допускает это действие")
+    obj.status = "in_progress" if name == "start" else "resolved"
+    if name == "resolve":
+        from app.services.impact.notifications import enqueue
+
+        await enqueue(db, obj, obj.author_id, "result_submitted", f"result:{obj.assignment_cycle}")
+
+
+def _verify(obj, payload, user, now):
+    if obj.status != "resolved":
+        raise ApiError(409, "INVALID_STATUS_TRANSITION", "Ожидается результат")
+    if user.id == obj.assignee_id:
+        raise ApiError(403, "AUTH_FORBIDDEN", "Самопроверка запрещена")
+    if not payload.verification_note:
+        raise ApiError(422, "VALIDATION_ERROR", "Укажите результат проверки")
+    obj.status, obj.verified_at, obj.reviewer_id = "verified", now, user.id
+    obj.verification_note = payload.verification_note
+
+
+def _reject_or_cancel(obj, payload, name):
+    require_reason(payload)
+    if name == "reject" and obj.status not in {"sent", "acknowledged"}:
+        raise ApiError(409, "INVALID_STATUS_TRANSITION", "Нельзя отклонить это состояние")
+    obj.status = "rejected" if name == "reject" else "cancelled"
+
+
+async def _reassign(db, obj, payload, user, request, task, now):
+    previous_cycle = obj.assignment_cycle
+    require_reason(payload)
+    if obj.status in {"draft", "resolved"} or not payload.assignee_id:
+        raise ApiError(409, "INVALID_STATUS_TRANSITION", "Переназначение недоступно")
+    await responsibility.recipient(db, payload.assignee_id, obj.department_id)
+    if payload.assignee_id == obj.assignee_id:
+        raise ApiError(422, "VALIDATION_ERROR", "Выберите другого получателя")
+    if task:
+        await workflow.patch(
+            db,
+            Task,
+            task,
+            TaskPatch(version=task.version, assignee_id=payload.assignee_id, comment=payload.reason),
+            user,
+            request,
+        )
+    obj.assignee_id = payload.assignee_id
+    obj.acknowledged_at, obj.status, obj.sent_at = None, "sent", now
+    obj.assignment_cycle = previous_cycle + 1
+    obj.escalation_level, obj.routing_issue = 0, None
+    obj.response_due_at = calendar.add_working_minutes(
+        now, calendar.RESPONSE_MINUTES[obj.priority], get_settings().business_holidays
+    )
+    obj.calendar_version = calendar.version(get_settings().business_holidays)
+    from app.services.impact.notifications import enqueue
+
+    await enqueue(db, obj, obj.assignee_id, "action_reassigned", f"reassign:{obj.assignment_cycle}")
+
+
+async def _change_deadline(db, obj, payload, user, request, task):
+    require_reason(payload)
+    if obj.status in {"draft", "resolved"} or not (payload.execution_due_at or payload.response_due_at):
+        raise ApiError(422, "VALIDATION_ERROR", "Укажите срок активного обращения")
+    if payload.response_due_at:
+        if obj.acknowledged_at:
+            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Реакция уже получена")
+        workflow.future_deadline(payload.response_due_at)
+        obj.response_due_at = payload.response_due_at
+    if payload.execution_due_at:
+        if not task:
+            raise ApiError(422, "VALIDATION_ERROR", "У обращения нет Task")
+        await workflow.patch(
+            db,
+            Task,
+            task,
+            TaskPatch(version=task.version, deadline=payload.execution_due_at, comment=payload.reason),
+            user,
+            request,
+        )
+
+
+async def _request_change(db, obj, payload):
+    require_reason(payload)
+    if obj.status == "draft":
+        raise ApiError(409, "INVALID_STATUS_TRANSITION", "Обращение ещё не отправлено")
+    if payload.assignee_id:
+        await responsibility.recipient(db, payload.assignee_id, obj.department_id)
+    from app.services.impact.notifications import enqueue
+
+    await enqueue(db, obj, obj.author_id, "change_requested", f"change:{obj.version}")
+
+
+async def _manual_escalate(db, obj, payload, user, request):
+    require_reason(payload)
+    if obj.status == "draft":
+        raise ApiError(409, "INVALID_STATUS_TRANSITION", "Обращение ещё не отправлено")
+    from app.services.impact.notifications import escalate
+
+    if not await escalate(db, obj, "manual", user, request, payload.reason, payload.assignee_id):
+        raise ApiError(422, "RESPONSIBLE_NOT_CONFIGURED", "Нет новой допустимой ступени эскалации")
+
+
+async def command(db, obj, name, payload, user, request):
     if name not in COMMANDS:
         raise ApiError(404, "RESOURCE_NOT_FOUND", "Команда не найдена")
-    permitted_fields = {
-        "send": set(),
-        "acknowledge": set(),
-        "start": set(),
-        "resolve": {"result", "result_refs"},
-        "verify": {"verification_note"},
-        "reject": {"reason"},
-        "cancel": {"reason"},
-        "reassign": {"reason", "assignee_id"},
-        "change-deadline": {"reason", "execution_due_at", "response_due_at"},
-        "request-change": {"reason", "assignee_id", "execution_due_at", "response_due_at"},
-        "escalate": {"reason", "assignee_id"},
-    }
-    if payload.model_fields_set - {"version"} - permitted_fields[name]:
+    if payload.model_fields_set - {"version"} - PERMITTED_FIELDS[name]:
         raise ApiError(422, "VALIDATION_ERROR", "Поле не относится к выбранной команде")
     check_version(obj, payload.version)
     if obj.status in TERMINAL:
@@ -289,167 +476,23 @@ async def command(db, obj, name, payload, user, request):
     now = datetime.now(UTC)
     task = await task_for_update(db, obj)
     if name == "send":
-        if obj.status != "draft":
-            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Отправляется только черновик")
-        if not obj.assignee_id:
-            raise ApiError(422, "RESPONSIBLE_NOT_CONFIGURED", "Назначьте ответственного")
-        await responsibility.recipient(db, obj.assignee_id, obj.department_id)
-        await workflow.active_department(db, obj.department_id)
-        await workflow.validate_links(
-            db, user, obj.department_id, obj.decision_id, obj.alert_id, obj.order_id
-        )
-        if obj.type == "task":
-            if task:
-                # Serialize competing associations even when their action rows differ.
-                linked = await db.scalar(
-                    select(ManagementAction.id).where(
-                        ManagementAction.task_id == task.id,
-                        ManagementAction.id != obj.id,
-                        ManagementAction.status.not_in(TERMINAL | {"draft"}),
-                    )
-                )
-                if (
-                    task.status not in {"new", "in_progress"}
-                    or task.department_id != obj.department_id
-                    or task.assignee_id != obj.assignee_id
-                    or linked
-                ):
-                    raise ApiError(422, "VALIDATION_ERROR", "Задача не подходит для поручения")
-            else:
-                if not obj.planned_deadline:
-                    raise ApiError(422, "VALIDATION_ERROR", "Укажите срок исполнения")
-                task = await workflow.create(
-                    db,
-                    Task,
-                    TaskCreate(
-                        title=obj.title,
-                        description=obj.text,
-                        assignee_id=obj.assignee_id,
-                        department_id=obj.department_id,
-                        deadline=obj.planned_deadline,
-                        priority=obj.priority,
-                        decision_id=obj.decision_id,
-                        alert_id=obj.alert_id,
-                        order_id=obj.order_id,
-                    ),
-                    user,
-                    request,
-                )
-                obj.task_id = task.id
-        obj.status, obj.sent_at = "sent", now
-        obj.assignment_cycle += 1
-        obj.response_due_at = calendar.add_working_minutes(
-            now, calendar.RESPONSE_MINUTES[obj.priority], get_settings().business_holidays
-        )
-        obj.calendar_version = calendar.version(get_settings().business_holidays)
-        await enqueue(db, obj, obj.assignee_id, "action_sent", f"send:{obj.assignment_cycle}")
+        await _send(db, obj, user, request, task, now)
     elif name == "acknowledge":
-        if obj.status not in {"sent", "in_progress", "resolved"} or obj.acknowledged_at:
-            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Подтверждение недоступно")
-        obj.acknowledged_at = now
-        if obj.status == "sent":
-            obj.status = "acknowledged"
+        _acknowledge(obj, now)
     elif name in {"start", "resolve"}:
-        if obj.status not in (
-            {"acknowledged"} if name == "start" else {"acknowledged", "in_progress", "resolved"}
-        ):
-            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Сначала подтвердите получение")
-        if name == "resolve":
-            if obj.status == "resolved" and obj.result:
-                raise ApiError(409, "INVALID_STATUS_TRANSITION", "Результат уже сообщён")
-            if not payload.result:
-                raise ApiError(422, "VALIDATION_ERROR", "Укажите результат")
-            await validate_refs(db, user, obj.department_id, payload.result_refs)
-            obj.result, obj.result_refs = payload.result, [r.model_dump() for r in payload.result_refs]
-            obj.resolved_at = now
-        if task:
-            # Existing workflow forbids new -> completed; perform the ordinary start first.
-            if task.status == "new":
-                await workflow.patch(
-                    db, Task, task, TaskPatch(version=task.version, status="in_progress"), user, request
-                )
-            if name == "resolve" and task.status == "in_progress":
-                await workflow.patch(
-                    db, Task, task, TaskPatch(version=task.version, status="completed"), user, request
-                )
-            if task.status not in ({"in_progress"} if name == "start" else {"completed"}):
-                raise ApiError(409, "INVALID_STATUS_TRANSITION", "Задача не допускает это действие")
-        obj.status = "in_progress" if name == "start" else "resolved"
-        if name == "resolve":
-            await enqueue(db, obj, obj.author_id, "result_submitted", f"result:{obj.assignment_cycle}")
+        await _start_resolve(db, obj, payload, user, request, task, name, now)
     elif name == "verify":
-        if obj.status != "resolved":
-            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Ожидается результат")
-        if user.id == obj.assignee_id:
-            raise ApiError(403, "AUTH_FORBIDDEN", "Самопроверка запрещена")
-        if not payload.verification_note:
-            raise ApiError(422, "VALIDATION_ERROR", "Укажите результат проверки")
-        obj.status, obj.verified_at, obj.reviewer_id = "verified", now, user.id
-        obj.verification_note = payload.verification_note
+        _verify(obj, payload, user, now)
     elif name in {"reject", "cancel"}:
-        require_reason(payload)
-        if name == "reject" and obj.status not in {"sent", "acknowledged"}:
-            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Нельзя отклонить это состояние")
-        obj.status = "rejected" if name == "reject" else "cancelled"
+        _reject_or_cancel(obj, payload, name)
     elif name == "reassign":
-        previous_cycle = obj.assignment_cycle
-        require_reason(payload)
-        if obj.status in {"draft", "resolved"} or not payload.assignee_id:
-            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Переназначение недоступно")
-        await responsibility.recipient(db, payload.assignee_id, obj.department_id)
-        if payload.assignee_id == obj.assignee_id:
-            raise ApiError(422, "VALIDATION_ERROR", "Выберите другого получателя")
-        if task:
-            await workflow.patch(
-                db,
-                Task,
-                task,
-                TaskPatch(version=task.version, assignee_id=payload.assignee_id, comment=payload.reason),
-                user,
-                request,
-            )
-        obj.assignee_id = payload.assignee_id
-        obj.acknowledged_at, obj.status, obj.sent_at = None, "sent", now
-        obj.assignment_cycle = previous_cycle + 1
-        obj.escalation_level, obj.routing_issue = 0, None
-        obj.response_due_at = calendar.add_working_minutes(
-            now, calendar.RESPONSE_MINUTES[obj.priority], get_settings().business_holidays
-        )
-        obj.calendar_version = calendar.version(get_settings().business_holidays)
-        await enqueue(db, obj, obj.assignee_id, "action_reassigned", f"reassign:{obj.assignment_cycle}")
+        await _reassign(db, obj, payload, user, request, task, now)
     elif name == "change-deadline":
-        require_reason(payload)
-        if obj.status in {"draft", "resolved"} or not (payload.execution_due_at or payload.response_due_at):
-            raise ApiError(422, "VALIDATION_ERROR", "Укажите срок активного обращения")
-        if payload.response_due_at:
-            if obj.acknowledged_at:
-                raise ApiError(409, "INVALID_STATUS_TRANSITION", "Реакция уже получена")
-            workflow.future_deadline(payload.response_due_at)
-            obj.response_due_at = payload.response_due_at
-        if payload.execution_due_at:
-            if not task:
-                raise ApiError(422, "VALIDATION_ERROR", "У обращения нет Task")
-            await workflow.patch(
-                db,
-                Task,
-                task,
-                TaskPatch(version=task.version, deadline=payload.execution_due_at, comment=payload.reason),
-                user,
-                request,
-            )
+        await _change_deadline(db, obj, payload, user, request, task)
     elif name == "request-change":
-        require_reason(payload)
-        if obj.status == "draft":
-            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Обращение ещё не отправлено")
-        if payload.assignee_id:
-            await responsibility.recipient(db, payload.assignee_id, obj.department_id)
-        await enqueue(db, obj, obj.author_id, "change_requested", f"change:{obj.version}")
+        await _request_change(db, obj, payload)
     elif name == "escalate":
-        require_reason(payload)
-        if obj.status == "draft":
-            raise ApiError(409, "INVALID_STATUS_TRANSITION", "Обращение ещё не отправлено")
-        if not await escalate(db, obj, "manual", user, request, payload.reason, payload.assignee_id):
-            raise ApiError(422, "RESPONSIBLE_NOT_CONFIGURED", "Нет новой допустимой ступени эскалации")
+        await _manual_escalate(db, obj, payload, user, request)
     touch(obj)
     event(db, obj, name, user, request, before, payload.model_dump(mode="json", exclude={"version"}))
     await db.flush()

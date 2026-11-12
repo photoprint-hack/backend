@@ -1,4 +1,5 @@
 from datetime import UTC, datetime, time, timedelta
+from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -7,6 +8,7 @@ from sqlalchemy import exists, func, or_, select
 
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
+from app.core.locks import WORKFLOW_ACTION
 from app.core.permissions import WRITE_ROLES, department_scope, require_role, scope_statement
 from app.models import (
     Alert,
@@ -24,14 +26,15 @@ from app.models import (
 )
 from app.services import audit
 from app.services.order_links import OrderDealLinkError, validate_pair
+from app.services.scoping import like_pattern
 from app.services.serialization import columns
 
 
-async def scoped(db, model, identifier, user, lock=False):
+async def scoped(db, model, identifier, user, lock=False) -> Any:
     if lock and model is Task:
         from sqlalchemy import text
 
-        await db.execute(text("SELECT pg_advisory_xact_lock(178901235)"))
+        await db.execute(text(f"SELECT pg_advisory_xact_lock({WORKFLOW_ACTION})"))
     stmt = scope_statement(select(model).where(model.id == identifier), model, user)
     if model is Task:
         stmt = stmt.where(Task.deleted_at.is_(None))
@@ -48,8 +51,7 @@ async def assignee(db, identifier, department):
     if (
         not found
         or not found.is_active
-        or found.role not in {"admin", "director"}
-        and found.department_id != department
+        or (found.role not in {"admin", "director"} and found.department_id != department)
     ):
         raise ApiError(
             422,
@@ -206,6 +208,53 @@ def transition(current, new, allowed):
         raise ApiError(409, "INVALID_STATUS_TRANSITION", "Недопустимый переход статуса")
 
 
+def _apply_order_patch(obj, data, status):
+    """Validate and apply Order status sub-fields and cross-field rules."""
+    transition(
+        obj.status,
+        status,
+        {"new": {"in_progress", "cancelled"}, "in_progress": {"completed", "cancelled"}},
+    )
+    for key, allowed in {
+        "moderation_status": {
+            "pending": {"approved", "rejected", "revision_required"},
+            "revision_required": {"pending"},
+        },
+        "production_status": {
+            "queued": {"in_progress", "blocked"},
+            "blocked": {"queued"},
+            "in_progress": {"completed", "blocked"},
+        },
+        "delivery_status": {
+            "not_started": {"in_transit"},
+            "in_transit": {"delivered", "delayed", "returned"},
+            "delayed": {"in_transit", "delivered", "returned"},
+            "delivered": {"returned"},
+        },
+    }.items():
+        if key in data:
+            transition(getattr(obj, key), data[key], allowed)
+    production = data.get("production_status", obj.production_status)
+    moderation = data.get("moderation_status", obj.moderation_status)
+    delivery = data.get("delivery_status", obj.delivery_status)
+    if production == "in_progress" and moderation != "approved":
+        raise ApiError(422, "VALIDATION_ERROR", "Производство требует одобренной модерации")
+    if delivery != "not_started" and production != "completed":
+        raise ApiError(422, "VALIDATION_ERROR", "Доставка требует завершённого производства")
+    completed = data.get("completed_at", obj.completed_at)
+    if status == "completed" and (
+        completed is None or completed < obj.created_at or completed > datetime.now(UTC)
+    ):
+        raise ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Укажите корректную дату завершения",
+            {"completed_at": "Не раньше создания и не позже текущего времени"},
+        )
+    if status != "completed" and completed is not None:
+        raise ApiError(422, "VALIDATION_ERROR", "Дата завершения допустима только для completed")
+
+
 async def patch(db, model, obj, payload, user, request):
     data = payload.model_dump(exclude_unset=True)
     if model is Task and user.role == "employee":
@@ -221,49 +270,7 @@ async def patch(db, model, obj, payload, user, request):
     old = columns(obj)
     status = data.get("status", obj.status)
     if model is Order:
-        transition(
-            obj.status,
-            status,
-            {"new": {"in_progress", "cancelled"}, "in_progress": {"completed", "cancelled"}},
-        )
-        for key, allowed in {
-            "moderation_status": {
-                "pending": {"approved", "rejected", "revision_required"},
-                "revision_required": {"pending"},
-            },
-            "production_status": {
-                "queued": {"in_progress", "blocked"},
-                "blocked": {"queued"},
-                "in_progress": {"completed", "blocked"},
-            },
-            "delivery_status": {
-                "not_started": {"in_transit"},
-                "in_transit": {"delivered", "delayed", "returned"},
-                "delayed": {"in_transit", "delivered", "returned"},
-                "delivered": {"returned"},
-            },
-        }.items():
-            if key in data:
-                transition(getattr(obj, key), data[key], allowed)
-        production = data.get("production_status", obj.production_status)
-        moderation = data.get("moderation_status", obj.moderation_status)
-        delivery = data.get("delivery_status", obj.delivery_status)
-        if production == "in_progress" and moderation != "approved":
-            raise ApiError(422, "VALIDATION_ERROR", "Производство требует одобренной модерации")
-        if delivery != "not_started" and production != "completed":
-            raise ApiError(422, "VALIDATION_ERROR", "Доставка требует завершённого производства")
-        completed = data.get("completed_at", obj.completed_at)
-        if status == "completed" and (
-            completed is None or completed < obj.created_at or completed > datetime.now(UTC)
-        ):
-            raise ApiError(
-                422,
-                "VALIDATION_ERROR",
-                "Укажите корректную дату завершения",
-                {"completed_at": "Не раньше создания и не позже текущего времени"},
-            )
-        if status != "completed" and completed is not None:
-            raise ApiError(422, "VALIDATION_ERROR", "Дата завершения допустима только для completed")
+        _apply_order_patch(obj, data, status)
     elif model is Decision:
         transition(
             obj.status,
@@ -288,11 +295,10 @@ async def patch(db, model, obj, payload, user, request):
                 "Укажите результат проверки",
                 {"verification_note": "Обязательное поле"},
             )
-        if status == "cancelled" or obj.status == "needs_review" and status == "in_progress":
-            if not comment:
-                raise ApiError(
-                    422, "VALIDATION_ERROR", "Требуется комментарий", {"comment": "Обязательное поле"}
-                )
+        if (
+            status == "cancelled" or (obj.status == "needs_review" and status == "in_progress")
+        ) and not comment:
+            raise ApiError(422, "VALIDATION_ERROR", "Требуется комментарий", {"comment": "Обязательное поле"})
         if "owner_id" in data:
             await assignee(db, data["owner_id"], obj.department_id)
     else:
@@ -369,6 +375,20 @@ async def list_objects(db, model, query, user):
     stmt = scope_statement(select(model), model, user, query.department_id)
     if model is Task:
         stmt = stmt.where(Task.deleted_at.is_(None))
+        if getattr(query, "mine", False):
+            stmt = stmt.where(Task.assignee_id == user.id)
+    if model is Decision and getattr(query, "product_id", None):
+        product = query.product_id
+        alerts = (
+            scope_statement(select(Alert.id).where(Alert.product_id == product), Alert, user)
+            if user.role != "employee"
+            else select(Alert.id).where(False)
+        )
+        orders = scope_statement(select(Order.id).where(Order.product_id == product), Order, user)
+        tasks = scope_statement(
+            select(Task.decision_id).where(Task.deleted_at.is_(None), Task.order_id.in_(orders)), Task, user
+        )
+        stmt = stmt.where(or_(Decision.alert_id.in_(alerts), Decision.id.in_(tasks)))
     statuses = {
         Order: {"new", "in_progress", "completed", "cancelled"},
         Decision: {"new", "in_progress", "needs_review", "completed", "cancelled"},
@@ -396,7 +416,7 @@ async def list_objects(db, model, query, user):
         if value is not None and hasattr(model, key):
             stmt = stmt.where(getattr(model, key) == value)
     if query.search:
-        pattern = "%" + query.search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        pattern = like_pattern(query.search)
         if model is Order:
             stmt = stmt.where(
                 or_(

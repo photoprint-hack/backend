@@ -8,6 +8,7 @@ from fastapi.encoders import jsonable_encoder
 from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
+from app.core.locks import RECALCULATION
 from app.models import (
     Campaign,
     CapacityPlan,
@@ -153,7 +154,7 @@ async def normalize(db, model, data, event_at):
         raise RecordError(
             "invalid_values",
             "Неизвестные поля",
-            {key: "Поле не разрешено для импорта" for key in sorted(extra)},
+            dict.fromkeys(sorted(extra), "Поле не разрешено для импорта"),
         )
     result = {}
     for key, column in allowed.items():
@@ -188,9 +189,8 @@ async def normalize(db, model, data, event_at):
         raise RecordError("invalid_values", "Неизвестная стадия сделки")
     if model is Order and result.get("status") == "completed" and not result.get("completed_at"):
         raise RecordError("missing_fields", "Завершённому заказу требуется completed_at")
-    if model is Deal:
-        if result.get("stage") == "won" and not result.get("order_id"):
-            raise RecordError("broken_relations", "Выигранная сделка должна быть связана с заказом")
+    if model is Deal and result.get("stage") == "won" and not result.get("order_id"):
+        raise RecordError("broken_relations", "Выигранная сделка должна быть связана с заказом")
     order_id = result.get("order_id")
     if order_id and model in {FinanceRecord, ProductionRecord, SupportInteraction}:
         order = await db.get(Order, order_id)
@@ -260,7 +260,7 @@ async def import_records(db, source, records, user, request=None):
             if event_at.tzinfo is None:
                 raise RecordError("invalid_values", "event_at требует часовой пояс")
             async with db.begin_nested():
-                await db.execute(text("SELECT pg_advisory_xact_lock(178901234)"))
+                await db.execute(text(f"SELECT pg_advisory_xact_lock({RECALCULATION})"))
                 values = await normalize(db, model, record["data"], event_at)
                 digest = hashlib.sha256(
                     json.dumps(jsonable_encoder(values), sort_keys=True, separators=(",", ":")).encode()

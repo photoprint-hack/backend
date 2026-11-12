@@ -7,6 +7,7 @@ from sqlalchemy import func, select, text
 
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
+from app.core.locks import AI_ANALYSIS
 from app.core.permissions import READ_ROLES, require_role
 from app.models import DataQualityIssue
 from app.models.impact import AIAnalysis
@@ -151,7 +152,7 @@ async def analyze(db, payload, user):
         raise ApiError(409, "CONTEXT_STALE", "Контекст доступа или срок кэша изменился")
     if previous and previous.request_hash != request_hash:
         raise ApiError(409, "IDEMPOTENCY_CONFLICT", "Request key использован с другим контекстом")
-    await db.execute(text("SELECT pg_advisory_xact_lock(178901236)"))
+    await db.execute(text(f"SELECT pg_advisory_xact_lock({AI_ANALYSIS})"))
     now = datetime.now(UTC)
     if previous and previous.expires_at <= now:
         raise ApiError(409, "CONTEXT_STALE", "Срок анализа истёк; используйте новый request_key")

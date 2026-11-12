@@ -1,11 +1,23 @@
 from collections import Counter
 from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
-from sqlalchemy import func, select, text
+from sqlalchemy import String, Text, func, inspect, or_, select, text
 
-from app.models import DataQualityIssue, DataQualityRun, FinanceRecord, Order, SourceRecord, SourceSyncRun
+from app.core.locks import WORKFLOW_ACTION
+from app.models import (
+    DataQualityIssue,
+    DataQualityRun,
+    Deal,
+    DealEvent,
+    FinanceRecord,
+    Order,
+    SourceRecord,
+    SourceSyncRun,
+)
 from app.services.analytics import D, number, period
 from app.services.audit import record
+from app.services.imports import REGISTRY
 
 SOURCES = {
     "crm": "CRM",
@@ -42,7 +54,7 @@ async def source_status(db, source):
         else "error"
         if latest and latest.status == "failed"
         else "warning"
-        if stale or latest and latest.records_failed
+        if stale or (latest and latest.records_failed)
         else "healthy"
     )
     return {
@@ -129,10 +141,41 @@ async def reconciliation(db, query):
     }
 
 
-async def check(db, actor, source=None, request=None):
-    from types import SimpleNamespace
+async def _scan_persisted(db, code) -> tuple[int, int, int | None]:
+    """Count broken links, empty required fields and invalid CRM stages for one source."""
+    missing_fields = 0
+    broken = 0
+    for entity, model in REGISTRY[code].items():
+        broken += await db.scalar(
+            select(func.count())
+            .select_from(SourceRecord)
+            .outerjoin(model, model.id == SourceRecord.platform_id)
+            .where(SourceRecord.source_name == code, SourceRecord.entity_type == entity, model.id.is_(None))
+        )
+        empty_conditions = [
+            func.length(func.trim(getattr(model, column.key))) == 0
+            for column in inspect(model).columns
+            if isinstance(column.type, (String, Text)) and not column.nullable
+        ]
+        if empty_conditions:
+            missing_fields += await db.scalar(
+                select(func.count()).select_from(model).where(or_(*empty_conditions))
+            )
+    invalid = None
+    if code == "crm":
+        broken += await db.scalar(
+            select(func.count()).select_from(Deal).where(Deal.stage == "won", Deal.order_id.is_(None))
+        )
+        invalid = await db.scalar(
+            select(func.count())
+            .select_from(DealEvent)
+            .where(DealEvent.new_stage.not_in(["new", "qualified", "proposal", "won", "lost"]))
+        )
+    return missing_fields, broken, invalid
 
-    await db.execute(text("SELECT pg_advisory_xact_lock(178901235)"))
+
+async def check(db, actor, source=None, request=None):
+    await db.execute(text(f"SELECT pg_advisory_xact_lock({WORKFLOW_ACTION})"))
     selected = [source] if source else list(SOURCES)
     now = datetime.now(UTC)
     issues = []
@@ -177,54 +220,21 @@ async def check(db, actor, source=None, request=None):
                         {"run_id": str(latest.id)},
                     )
                 )
-    from sqlalchemy import String, Text, inspect, or_
-
-    from app.models import Deal, DealEvent
-    from app.services.imports import REGISTRY
-
     for code in selected:
-        missing_fields = 0
-        broken = 0
-        for entity, model in REGISTRY[code].items():
-            broken += await db.scalar(
-                select(func.count())
-                .select_from(SourceRecord)
-                .outerjoin(model, model.id == SourceRecord.platform_id)
-                .where(
-                    SourceRecord.source_name == code, SourceRecord.entity_type == entity, model.id.is_(None)
+        missing_fields, broken, invalid = await _scan_persisted(db, code)
+        checks += 2 * len(REGISTRY[code])
+        if invalid:
+            issues.append(
+                (
+                    "crm:invalid_stage",
+                    "crm",
+                    "invalid_values",
+                    "critical",
+                    "Неизвестные стадии CRM",
+                    invalid,
+                    {},
                 )
             )
-            empty_conditions = [
-                func.length(func.trim(getattr(model, column.key))) == 0
-                for column in inspect(model).columns
-                if isinstance(column.type, (String, Text)) and not column.nullable
-            ]
-            if empty_conditions:
-                missing_fields += await db.scalar(
-                    select(func.count()).select_from(model).where(or_(*empty_conditions))
-                )
-            checks += 2
-        if code == "crm":
-            broken += await db.scalar(
-                select(func.count()).select_from(Deal).where(Deal.stage == "won", Deal.order_id.is_(None))
-            )
-            invalid = await db.scalar(
-                select(func.count())
-                .select_from(DealEvent)
-                .where(DealEvent.new_stage.not_in(["new", "qualified", "proposal", "won", "lost"]))
-            )
-            if invalid:
-                issues.append(
-                    (
-                        "crm:invalid_stage",
-                        "crm",
-                        "invalid_values",
-                        "critical",
-                        "Неизвестные стадии CRM",
-                        invalid,
-                        {},
-                    )
-                )
         if missing_fields:
             issues.append(
                 (

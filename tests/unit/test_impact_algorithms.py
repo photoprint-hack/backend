@@ -33,19 +33,19 @@ def test_bfs_cycles_directions_filters_and_no_hidden_bridge():
 def test_openrouter_request_enforces_free_structured_contract(monkeypatch):
     config = get_settings()
     monkeypatch.setattr(config, "openrouter_api_key", SecretStr("test-key"))
-    value = dict(
-        summary="Проверка",
-        changes=[],
-        verified_facts=[],
-        calculated_dependencies=[],
-        correlations=[],
-        hypotheses=[],
-        possible_impacts=[],
-        recommendations=[],
-        data_gaps=[],
-        suggested_responsible=None,
-        draft_text="Черновик",
-    )
+    value = {
+        "summary": "Проверка",
+        "changes": [],
+        "verified_facts": [],
+        "calculated_dependencies": [],
+        "correlations": [],
+        "hypotheses": [],
+        "possible_impacts": [],
+        "recommendations": [],
+        "data_gaps": [],
+        "suggested_responsible": None,
+        "draft_text": "Черновик",
+    }
 
     class Response:
         def __enter__(self):

@@ -26,6 +26,7 @@ from app.schemas.reporting.production import ProductionSummary, QueueQuery
 from app.schemas.shared.query import BusinessQuery
 from app.schemas.workflow.orders import OrderOut
 from app.services.analytics import D, calculate, number, percentage, period
+from app.services.scoping import apply_department, apply_product, like_pattern
 from app.services.serialization import columns
 
 router = APIRouter(tags=["business-summaries"])
@@ -42,11 +43,7 @@ async def loaded(db, source):
 
 
 def filtered(stmt, model, department, product=None):
-    if department:
-        stmt = stmt.where(model.department_id == department)
-    if product and hasattr(model, "product_id"):
-        stmt = stmt.where(model.product_id == product)
-    return stmt
+    return apply_product(apply_department(stmt, model, department), model, product)
 
 
 @router.get("/sales/summary", response_model=Data[SalesSummary])
@@ -199,11 +196,7 @@ async def deals(db: DB, user: CurrentUser, query: Annotated[DealsQuery, Query()]
     if query.search:
         stmt = stmt.where(
             Deal.customer_id.in_(
-                select(Customer.id).where(
-                    Customer.name.ilike(
-                        "%" + query.search.replace("%", "\\%").replace("_", "\\_") + "%", escape="\\"
-                    )
-                )
+                select(Customer.id).where(Customer.name.ilike(like_pattern(query.search), escape="\\"))
             )
         )
     total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
@@ -288,7 +281,7 @@ async def production(db: DB, user: CurrentUser, query: Q):
         "defect_rate_percent": number(percentage(defects, actual)),
     }
     if not ready:
-        values = {k: None for k in values}
+        values = dict.fromkeys(values)
     return {
         "data": {
             "context": {

@@ -1,9 +1,8 @@
 from decimal import Decimal
-from typing import Annotated, Generic, TypeVar
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, PlainSerializer
 
-T = TypeVar("T")
 Money = Annotated[
     Decimal,
     Field(ge=0, max_digits=14, decimal_places=2),
@@ -22,11 +21,11 @@ class Schema(BaseModel):
     model_config = ConfigDict(extra="forbid", from_attributes=True, str_strip_whitespace=True)
 
 
-class Data(Schema, Generic[T]):
+class Data[T](Schema):
     data: T
 
 
-class Page(Schema, Generic[T]):
+class Page[T](Schema):
     items: list[T]
     total: int
     page: int

@@ -15,6 +15,8 @@ from app.schemas.common import Data, Page, page
 from app.schemas.reporting.production import ProductionOut, ProductionQuery
 from app.schemas.reporting.support import SupportOut, SupportQuery
 from app.schemas.shared.query import BusinessQuery
+from app.services.presentation import production_labels
+from app.services.scoping import apply_department, apply_product, like_pattern
 from app.services.serialization import columns
 
 router = APIRouter(tags=["catalog"])
@@ -50,15 +52,13 @@ async def list_catalog(model, db, user, query):
         if query.customer_type:
             stmt = stmt.where(Customer.customer_type == query.customer_type)
     if model in {Deal, ProductionRecord, SupportInteraction} and department:
-        stmt = stmt.where(model.department_id == department)
+        stmt = apply_department(stmt, model, department)
     for field in ("is_active", "category", "channel", "order_id", "product_id", "status"):
         value = getattr(query, field, None)
         if value is not None and hasattr(model, field):
             stmt = stmt.where(getattr(model, field) == value)
     if model is SupportInteraction and getattr(query, "product_id", None):
-        stmt = stmt.where(
-            SupportInteraction.order_id.in_(select(Order.id).where(Order.product_id == query.product_id))
-        )
+        stmt = apply_product(stmt, SupportInteraction, query.product_id)
     if model is Campaign and department:
         own = or_(
             Campaign.id.in_(
@@ -81,7 +81,7 @@ async def list_catalog(model, db, user, query):
             if model is SupportInteraction
             else model.external_id
         )
-        pattern = "%" + query.search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        pattern = like_pattern(query.search)
         stmt = stmt.where(field.ilike(pattern, escape="\\"))
     if getattr(query, "date_from", None) or getattr(query, "date_to", None):
         from datetime import datetime, time, timedelta
@@ -159,6 +159,7 @@ async def list_catalog(model, db, user, query):
     if model is ProductionRecord:
         for item in items:
             item["source_system"] = "erp"
+        items = await production_labels(db, items)
     return page(items, total, query.page, query.page_size)
 
 

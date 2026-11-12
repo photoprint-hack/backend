@@ -2,6 +2,8 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
+from pydantic import Field
+
 from app.schemas.common import Page, Schema
 from app.schemas.shared.query import AnalyticsQuery, PaginationQuery
 from app.schemas.shared.references import Link
@@ -13,7 +15,9 @@ class Context(Schema):
     timezone: str = "Europe/Minsk"
     department_id: UUID | None
     product_id: UUID | None
-    ignored_filters: list[str] = []
+    # Pydantic v2 copies mutable defaults per instance; the literal also keeps
+    # the `default: []` shape in the exported OpenAPI schema.
+    ignored_filters: list[str] = []  # noqa: RUF012
 
 
 class Kpi(Schema):
@@ -52,7 +56,13 @@ class MetricsQuery(PaginationQuery, AnalyticsQuery):
 
 
 class HistoryQuery(PaginationQuery, AnalyticsQuery):
-    interval: Literal["day", "week", "month"] = "day"
+    interval: Literal["day", "week", "month"] = Field(
+        default="day",
+        description=(
+            "Группировка истории KPI. day: максимум 31 календарный день включительно; "
+            "week и month: максимум 366 дней. При превышении диапазона API возвращает 422."
+        ),
+    )
 
 
 class BreakdownQuery(PaginationQuery, AnalyticsQuery):

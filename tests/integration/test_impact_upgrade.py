@@ -46,9 +46,9 @@ async def test_additive_upgrade_preserves_existing_rows_and_passwords(database, 
     async with database() as db:
         ctx = await create_context(
             db,
-            passwords={
-                role: "MigrationTest123!" for role in ["admin", "director", "manager", "analyst", "employee"]
-            },
+            passwords=dict.fromkeys(
+                ["admin", "director", "manager", "analyst", "employee"], "MigrationTest123!"
+            ),
         )
         for stage in [seed_catalog, seed_orders, seed_support, seed_plans, seed_sources, seed_workflow]:
             await stage(ctx)

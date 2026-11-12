@@ -20,10 +20,9 @@ async def test_reseed_does_not_duplicate_or_overwrite_work(database, seeded_data
         await db.commit()
         await seed(
             db,
-            passwords={
-                role: "ChangedPassword123!"
-                for role in ["admin", "director", "manager", "analyst", "employee"]
-            },
+            passwords=dict.fromkeys(
+                ["admin", "director", "manager", "analyst", "employee"], "ChangedPassword123!"
+            ),
         )
         await db.commit()
         for model, count in before.items():

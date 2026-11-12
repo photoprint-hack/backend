@@ -7,6 +7,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import get_settings
+from app.core.locks import RECALCULATION
 from app.models import (
     Campaign,
     CapacityPlan,
@@ -80,7 +81,7 @@ async def create_context(db, *, passwords, reference=None, restore=False):
     for role in ("admin", "director", "manager", "analyst", "employee"):
         if role not in passwords or not 12 <= len(passwords[role]) <= 128:
             raise ValueError("Provide 12–128-character demo passwords for all five roles")
-    await db.execute(text("SELECT pg_advisory_xact_lock(178901234)"))
+    await db.execute(text(f"SELECT pg_advisory_xact_lock({RECALCULATION})"))
     # Stable IDs and insert-only seeding preserve existing credentials and user activity.
     known = {
         model: set((await db.scalars(select(model.id))).all())

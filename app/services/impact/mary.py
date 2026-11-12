@@ -3,6 +3,7 @@ from datetime import UTC, datetime
 from sqlalchemy import select, text
 
 from app.core.exceptions import ApiError
+from app.core.locks import MARY_INGEST
 from app.core.permissions import require_role
 from app.models import SourceRecord
 from app.models.impact import MaryEvent
@@ -12,7 +13,7 @@ from app.services.impact.graph import digest
 
 async def receive(db, payload, user, request):
     require_role(user, {"admin"})
-    await db.execute(text("SELECT pg_advisory_xact_lock(178901237)"))
+    await db.execute(text(f"SELECT pg_advisory_xact_lock({MARY_INGEST})"))
     result = {"simulated": True, "inserted": 0, "updated": 0, "skipped": 0, "failed": 0, "errors": []}
     for index, record in enumerate(payload.records):
         try:

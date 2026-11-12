@@ -2,10 +2,10 @@ from datetime import UTC, datetime
 
 from sqlalchemy import inspect, select
 
-from app.models import Customer, Decision, Department, Order, Product, Task, User
+from app.models import Alert, Customer, Decision, Department, Order, Product, Task, User
 
 
-def columns(obj, exclude=()):
+def columns(obj, exclude=()) -> dict:
     return {
         column.key: getattr(obj, column.key)
         for column in inspect(type(obj)).columns
@@ -13,7 +13,7 @@ def columns(obj, exclude=()):
     }
 
 
-def actions(obj, user):
+def actions(obj, user) -> list[str]:
     result = ["read"]
     if user.role in {"admin", "director", "manager"}:
         if isinstance(obj, (Order, Decision, Task)) and obj.status not in {"completed", "cancelled"}:
@@ -37,10 +37,10 @@ def actions(obj, user):
     return result
 
 
-async def serialize_many(db, objects, user):
+async def serialize_many(db, objects, user) -> list[dict]:
     if not objects:
         return []
-    refs = {User: set(), Department: set(), Customer: set(), Product: set(), Decision: set()}
+    refs = {User: set(), Department: set(), Customer: set(), Product: set(), Decision: set(), Alert: set()}
     for obj in objects:
         for model, fields in [
             (User, ("owner_id", "created_by", "assignee_id")),
@@ -48,6 +48,7 @@ async def serialize_many(db, objects, user):
             (Customer, ("customer_id",)),
             (Product, ("product_id",)),
             (Decision, ("decision_id",)),
+            (Alert, ("alert_id",)),
         ]:
             for field in fields:
                 value = getattr(obj, field, None)
@@ -70,7 +71,7 @@ async def serialize_many(db, objects, user):
             "full_name" if model is User else "name": found.full_name
             if model is User
             else found.title
-            if model is Decision
+            if model in {Decision, Alert}
             else found.name,
         }
 
@@ -97,6 +98,12 @@ async def serialize_many(db, objects, user):
                 decision=ref(Decision, obj.decision_id),
                 is_overdue=obj.deadline < datetime.now(UTC) and obj.status in {"new", "in_progress"},
             )
+        if isinstance(obj, (Decision, Task)):
+            alert = cache[Alert].get(obj.alert_id)
+            visible = user.role in {"admin", "director", "analyst"} or (
+                user.role == "manager" and alert and alert.department_id == user.department_id
+            )
+            item["alert_title"] = alert.title if alert and visible else None
         if isinstance(obj, (Order, Decision, Task)):
             item["allowed_actions"] = actions(obj, user)
         results.append(item)

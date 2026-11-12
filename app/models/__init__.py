@@ -8,6 +8,15 @@ from app.models.analytics import (
     MetricValue,
 )
 from app.models.identity import Department, RefreshToken, User
+from app.models.impact import (  # noqa: F401  # register additive v2 tables with Alembic metadata
+    AIAnalysis,
+    DepartmentResponsibility,
+    ManagementAction,
+    MaryEvent,
+    MetricResponsibility,
+    Notification,
+    NotificationOutbox,
+)
 from app.models.operations import (
     AuditLog,
     DataQualityIssue,
@@ -32,35 +41,32 @@ from app.models.workflow import Decision, DecisionHistory, Task
 
 __all__ = [
     "Alert",
-    "FinanceRecord",
-    "ForecastRecord",
-    "HRSnapshot",
-    "Metric",
-    "MetricTarget",
-    "MetricValue",
-    "Department",
-    "RefreshToken",
-    "User",
     "AuditLog",
-    "DataQualityIssue",
-    "DataQualityRun",
-    "IdempotencyKey",
-    "SourceRecord",
-    "SourceSyncRun",
     "Campaign",
     "CapacityPlan",
     "Customer",
+    "DataQualityIssue",
+    "DataQualityRun",
     "Deal",
     "DealEvent",
+    "Decision",
+    "DecisionHistory",
+    "Department",
+    "FinanceRecord",
+    "ForecastRecord",
+    "HRSnapshot",
+    "IdempotencyKey",
+    "Metric",
+    "MetricTarget",
+    "MetricValue",
     "Order",
     "OrderEvent",
     "Product",
     "ProductionRecord",
+    "RefreshToken",
+    "SourceRecord",
+    "SourceSyncRun",
     "SupportInteraction",
-    "Decision",
-    "DecisionHistory",
     "Task",
+    "User",
 ]
-
-# Register additive v2 tables with Alembic metadata.
-from app.models import impact as impact  # noqa: E402

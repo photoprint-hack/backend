@@ -2,28 +2,33 @@ import calendar
 from collections import defaultdict
 from datetime import UTC, date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
-from uuid import NAMESPACE_URL, uuid5
+from types import SimpleNamespace
+from uuid import NAMESPACE_URL, UUID, uuid5
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select, text
 
 from app.core.config import get_settings
 from app.core.exceptions import ApiError
+from app.core.locks import RECALCULATION
 from app.core.permissions import READ_ROLES, department_scope, require_role
 from app.models import (
     Alert,
     CapacityPlan,
+    Department,
     FinanceRecord,
     HRSnapshot,
     Metric,
     MetricTarget,
     MetricValue,
     Order,
+    Product,
     ProductionRecord,
     SourceSyncRun,
     SupportInteraction,
 )
 from app.services.audit import record
+from app.services.scoping import apply_department, apply_product
 
 D = Decimal
 # code, name, unit, source codes, direction, category, default percentage target, formula
@@ -151,11 +156,11 @@ DEFINITIONS = [
 ]
 
 
-def metric_id(code):
+def metric_id(code) -> UUID:
     return uuid5(NAMESPACE_URL, "photoprint:metric:" + code)
 
 
-def period(query):
+def period(query) -> tuple[date, date, datetime, datetime]:
     zone = ZoneInfo(get_settings().report_timezone)
     today = datetime.now(zone).date()
     start = query.date_from or today.replace(day=1)
@@ -170,11 +175,11 @@ def period(query):
     )
 
 
-def percentage(numerator, denominator):
+def percentage(numerator, denominator) -> Decimal | None:
     return D(numerator) / D(denominator) * 100 if denominator else None
 
 
-def classify(actual, target, direction):
+def classify(actual, target, direction) -> tuple[str, Decimal | None, Decimal | None]:
     if actual is None:
         return "no_data", None, None
     if direction == "none":
@@ -195,12 +200,157 @@ def classify(actual, target, direction):
     )
 
 
-def number(value, unit="%"):
+def number(value, unit="%") -> int | float | None:
     if value is None:
         return None
     if unit in {"шт.", "клиентов"}:
         return int(value)
     return float(D(value).quantize(D("0.01"), rounding=ROUND_HALF_UP))
+
+
+REASON_MESSAGES = {
+    "SOURCE_NOT_LOADED": "Источник ещё не загружен",
+    "FUTURE_PERIOD": "За будущий период нет фактических данных",
+    "DIRECT_COST_MISSING": "Не для всех завершённых заказов загружены прямые затраты",
+    "HR_SNAPSHOT_MISSING": "Нет кадровых снимков",
+    "TARGET_MISSING": "План не задан",
+    "TARGET_ZERO": "Относительное отклонение от нулевого плана не определено",
+    "ZERO_DENOMINATOR": "Недостаточно данных для расчёта доли",
+}
+
+
+def _build_values(
+    orders,
+    productions,
+    capacities,
+    tickets,
+    latest,
+    firsts,
+    counts,
+    revenue,
+    cost,
+    revenue_target,
+    alert_count,
+    lo,
+    hi,
+) -> dict:
+    """Assemble the twelve raw KPI values from already-scoped records."""
+    return {
+        "revenue": revenue,
+        "gross_margin": percentage(revenue - cost, revenue),
+        "on_time_orders": percentage(sum(x.completed_at <= x.due_at for x in orders), len(orders)),
+        "defect_rate": percentage(
+            sum(x.defective_quantity for x in productions), sum(x.actual_quantity for x in productions)
+        ),
+        "new_customers": D(sum(lo <= first < hi for _, first in firsts)),
+        "active_customers": D(len(counts)),
+        "repeat_purchase_rate": percentage(sum(n >= 2 for n in counts.values()), len(counts)),
+        "support_sla": percentage(sum(x.closed_at <= x.sla_deadline for x in tickets), len(tickets)),
+        "capacity_utilization": percentage(
+            sum((x.actual_load_hours for x in productions), D(0)),
+            sum((x.available_hours for x in capacities), D(0)),
+        ),
+        "staffing_coverage": percentage(
+            sum(x.available_headcount for x in latest.values()),
+            sum(x.required_headcount for x in latest.values()),
+        ),
+        "sales_plan_achievement": percentage(revenue, revenue_target),
+        "critical_alerts_count": D(alert_count),
+    }
+
+
+def _metric_result(
+    spec,
+    metric,
+    actual,
+    target,
+    *,
+    context,
+    summed,
+    target_ids,
+    last_source,
+    today,
+    start,
+    end,
+    product,
+    revenue,
+    revenue_target,
+    now,
+    order_ids,
+    finance,
+    latest,
+) -> dict:
+    """Convert one KPI value into its public payload, applying no_data reasons."""
+    code, name, unit, sources, direction, category, _default_target, formula = spec
+    missing = [source for source in sources if source != "system" and source not in last_source]
+    reason = None
+    if missing:
+        actual = None
+        reason = "SOURCE_NOT_LOADED"
+    elif start > today and code != "critical_alerts_count":
+        actual = None
+        reason = "FUTURE_PERIOD"
+    elif code == "gross_margin" and order_ids and not order_ids.issubset({x.order_id for x in finance}):
+        actual = None
+        reason = "DIRECT_COST_MISSING"
+    elif code == "staffing_coverage" and not latest:
+        actual = None
+        reason = "HR_SNAPSHOT_MISSING"
+    status, achievement, deviation = classify(actual, target, direction)
+    if status == "no_data" and not reason:
+        reason = (
+            "TARGET_MISSING"
+            if target is None and actual is not None
+            else "TARGET_ZERO"
+            if target == 0
+            else "ZERO_DENOMINATOR"
+        )
+    ignored = ["product_id"] if code == "staffing_coverage" and product else []
+    notices = ["Фильтр продукта не применяется"] if ignored else []
+    if code == "staffing_coverage":
+        notices.append(
+            "Последний кадровый снимок не позже конца периода; начало периода не ограничивает выбор снимка"
+        )
+    supported = ["department"] + (["product"] if code != "staffing_coverage" else [])
+    if code == "revenue":
+        supported += ["order", "channel", "campaign"]
+    if code in {"defect_rate", "support_sla"}:
+        supported += ["cause"]
+    if code == "support_sla":
+        supported += ["order"]
+    forecast = None
+    method = None
+    if code in {"revenue", "sales_plan_achievement"} and start <= today < end and actual is not None:
+        projected = revenue / D((today - start).days + 1) * D((end - start).days + 1)
+        forecast = projected if code == "revenue" else percentage(projected, revenue_target)
+        method = "calendar_day_run_rate"
+    return {
+        "id": metric.id if metric else metric_id(code),
+        "code": code,
+        "name": metric.name if metric else name,
+        "description": metric.description if metric else name,
+        "category": category,
+        "actual": number(actual, unit),
+        "target": number(target, unit),
+        "forecast": number(forecast, unit),
+        "unit": unit,
+        "currency": "BYN" if unit == "BYN" else None,
+        "achievement_percent": number(achievement),
+        "deviation_percent": number(deviation),
+        "status": status,
+        "direction": direction,
+        "formula": metric.formula if metric else formula,
+        "formula_version": "1",
+        "source": sources,
+        "updated_at": now,
+        "source_updated_at": min([last_source[s] for s in sources if s in last_source], default=None),
+        "forecast_method": method,
+        "reason_code": reason,
+        "reason": REASON_MESSAGES.get(reason),
+        "context": {**context, "ignored_filters": ignored},
+        "notices": notices,
+        "supported_group_by": supported,
+    }
 
 
 async def calculate(db, query, user):
@@ -218,10 +368,9 @@ async def calculate(db, query, user):
     }
 
     def scope(stmt, model, *, has_product=True):
-        if department:
-            stmt = stmt.where(model.department_id == department)
+        stmt = apply_department(stmt, model, department)
         if product and has_product:
-            stmt = stmt.where(model.product_id == product)
+            stmt = apply_product(stmt, model, product)
         return stmt
 
     order_stmt = scope(
@@ -254,12 +403,7 @@ async def calculate(db, query, user):
         SupportInteraction.closed_at < hi,
         SupportInteraction.sla_deadline.is_not(None),
     )
-    if department:
-        support_stmt = support_stmt.where(SupportInteraction.department_id == department)
-    if product:
-        support_stmt = support_stmt.where(
-            SupportInteraction.order_id.in_(select(Order.id).where(Order.product_id == product))
-        )
+    support_stmt = scope(support_stmt, SupportInteraction)
     tickets = (await db.scalars(support_stmt)).all()
     hrs = (
         await db.scalars(
@@ -329,32 +473,27 @@ async def calculate(db, query, user):
         ),
         Alert,
     )
-    values = {
-        "revenue": revenue,
-        "gross_margin": percentage(revenue - cost, revenue),
-        "on_time_orders": percentage(sum(x.completed_at <= x.due_at for x in orders), len(orders)),
-        "defect_rate": percentage(
-            sum(x.defective_quantity for x in productions), sum(x.actual_quantity for x in productions)
-        ),
-        "new_customers": D(sum(lo <= first < hi for _, first in firsts)),
-        "active_customers": D(len(counts)),
-        "repeat_purchase_rate": percentage(sum(n >= 2 for n in counts.values()), len(counts)),
-        "support_sla": percentage(sum(x.closed_at <= x.sla_deadline for x in tickets), len(tickets)),
-        "capacity_utilization": percentage(
-            sum((x.actual_load_hours for x in productions), D(0)),
-            sum((x.available_hours for x in capacities), D(0)),
-        ),
-        "staffing_coverage": percentage(
-            sum(x.available_headcount for x in latest.values()),
-            sum(x.required_headcount for x in latest.values()),
-        ),
-        "sales_plan_achievement": percentage(revenue, revenue_target),
-        "critical_alerts_count": D(await db.scalar(alert_stmt)),
-    }
+    alert_count = await db.scalar(alert_stmt)
+    values = _build_values(
+        orders,
+        productions,
+        capacities,
+        tickets,
+        latest,
+        firsts,
+        counts,
+        revenue,
+        cost,
+        revenue_target,
+        alert_count,
+        lo,
+        hi,
+    )
     now = datetime.now(UTC)
     today = datetime.now(ZoneInfo(get_settings().report_timezone)).date()
     results = []
-    for code, name, unit, sources, direction, category, default_target, formula in DEFINITIONS:
+    for spec in DEFINITIONS:
+        code, default_target = spec[0], spec[6]
         metric = metrics.get(code)
         actual = values[code]
         target = (
@@ -364,94 +503,34 @@ async def calculate(db, query, user):
             if metric_id(code) in target_ids
             else None
         )
-        missing = [source for source in sources if source != "system" and source not in last_source]
-        reason = None
-        if missing:
-            actual = None
-            reason = "SOURCE_NOT_LOADED"
-        elif start > today and code != "critical_alerts_count":
-            actual = None
-            reason = "FUTURE_PERIOD"
-        elif code == "gross_margin" and order_ids and not order_ids.issubset({x.order_id for x in finance}):
-            actual = None
-            reason = "DIRECT_COST_MISSING"
-        elif code == "staffing_coverage" and not latest:
-            actual = None
-            reason = "HR_SNAPSHOT_MISSING"
-        status, achievement, deviation = classify(actual, target, direction)
-        if status == "no_data" and not reason:
-            reason = (
-                "TARGET_MISSING"
-                if target is None and actual is not None
-                else "TARGET_ZERO"
-                if target == 0
-                else "ZERO_DENOMINATOR"
+        results.append(
+            _metric_result(
+                spec,
+                metric,
+                actual,
+                target,
+                context=context,
+                summed=summed,
+                target_ids=target_ids,
+                last_source=last_source,
+                today=today,
+                start=start,
+                end=end,
+                product=product,
+                revenue=revenue,
+                revenue_target=revenue_target,
+                now=now,
+                order_ids=order_ids,
+                finance=finance,
+                latest=latest,
             )
-        ignored = ["product_id"] if code == "staffing_coverage" and product else []
-        notices = ["Фильтр продукта не применяется"] if ignored else []
-        if code == "staffing_coverage":
-            notices.append(
-                "Последний кадровый снимок не позже конца периода; начало периода не ограничивает выбор снимка"
-            )
-        supported = ["department"] + (["product"] if code != "staffing_coverage" else [])
-        if code == "revenue":
-            supported += ["order", "channel", "campaign"]
-        if code in {"defect_rate", "support_sla"}:
-            supported += ["cause"]
-        if code == "support_sla":
-            supported += ["order"]
-        forecast = None
-        method = None
-        if code in {"revenue", "sales_plan_achievement"} and start <= today < end and actual is not None:
-            projected = revenue / D((today - start).days + 1) * D((end - start).days + 1)
-            forecast = projected if code == "revenue" else percentage(projected, revenue_target)
-            method = "calendar_day_run_rate"
-        result = {
-            "id": metric.id if metric else metric_id(code),
-            "code": code,
-            "name": metric.name if metric else name,
-            "description": metric.description if metric else name,
-            "category": category,
-            "actual": number(actual, unit),
-            "target": number(target, unit),
-            "forecast": number(forecast, unit),
-            "unit": unit,
-            "currency": "BYN" if unit == "BYN" else None,
-            "achievement_percent": number(achievement),
-            "deviation_percent": number(deviation),
-            "status": status,
-            "direction": direction,
-            "formula": metric.formula if metric else formula,
-            "formula_version": "1",
-            "source": sources,
-            "updated_at": now,
-            "source_updated_at": min([last_source[s] for s in sources if s in last_source], default=None),
-            "forecast_method": method,
-            "reason_code": reason,
-            "reason": {
-                "SOURCE_NOT_LOADED": "Источник ещё не загружен",
-                "FUTURE_PERIOD": "За будущий период нет фактических данных",
-                "DIRECT_COST_MISSING": "Не для всех завершённых заказов загружены прямые затраты",
-                "HR_SNAPSHOT_MISSING": "Нет кадровых снимков",
-                "TARGET_MISSING": "План не задан",
-                "TARGET_ZERO": "Относительное отклонение от нулевого плана не определено",
-                "ZERO_DENOMINATOR": "Недостаточно данных для расчёта доли",
-            }.get(reason),
-            "context": {**context, "ignored_filters": ignored},
-            "notices": notices,
-            "supported_group_by": supported,
-        }
-        results.append(result)
+        )
     return results, context
 
 
 async def recalculate(db, actor=None, request=None):
-    from types import SimpleNamespace
-
-    from app.models import Department, Product
-
     # Serialize mutations before the underlying write in routes; this lock also protects direct imports.
-    await db.execute(text("SELECT pg_advisory_xact_lock(178901234)"))
+    await db.execute(text(f"SELECT pg_advisory_xact_lock({RECALCULATION})"))
     now = datetime.now(UTC)
     today = datetime.now(ZoneInfo(get_settings().report_timezone)).date()
     start = today.replace(day=1)
@@ -467,6 +546,7 @@ async def recalculate(db, actor=None, request=None):
         + [(None, product) for product in products]
         + [(department, product) for department in departments for product in products]
     )
+    # Demo-scale tradeoff: a full calculation runs once per department/product context.
     created = 0
     updated = 0
     count = 0

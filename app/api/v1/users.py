@@ -13,6 +13,7 @@ from app.models import Department, RefreshToken, User
 from app.schemas.common import Data, Page, Schema, page
 from app.schemas.identity import Assignee, DepartmentOut, Role, UserCreate, UserOut, UserPatch
 from app.services.audit import record
+from app.services.scoping import like_pattern
 
 router = APIRouter(tags=["identity"])
 
@@ -65,7 +66,7 @@ async def users(db: DB, user: CurrentUser, query: Annotated[UserQuery, Query()])
     if query.role:
         stmt = stmt.where(User.role == query.role)
     if query.search:
-        pattern = "%" + query.search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        pattern = like_pattern(query.search)
         # Email search is administrative; non-admin responses never leak email.
         stmt = stmt.where(
             or_(User.full_name.ilike(pattern, escape="\\"), User.email.ilike(pattern, escape="\\"))
@@ -182,11 +183,7 @@ async def departments(db: DB, user: CurrentUser, query: Annotated[DepartmentQuer
     if query.is_active is not None:
         stmt = stmt.where(Department.is_active == query.is_active)
     if query.search:
-        stmt = stmt.where(
-            Department.name.ilike(
-                "%" + query.search.replace("%", "\\%").replace("_", "\\_") + "%", escape="\\"
-            )
-        )
+        stmt = stmt.where(Department.name.ilike(like_pattern(query.search), escape="\\"))
     total = await db.scalar(select(func.count()).select_from(stmt.subquery()))
     col = getattr(Department, query.sort_by)
     rows = (

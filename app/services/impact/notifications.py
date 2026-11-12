@@ -104,13 +104,22 @@ async def scan_sla(db, now=None):
             return count
         last_id = rows[-1].id
         for obj in rows:
-            if obj.response_due_at and obj.response_due_at < now and not obj.acknowledged_at:
-                if await escalate(db, obj, "response"):
-                    count += 1
+            if (
+                obj.response_due_at
+                and obj.response_due_at < now
+                and not obj.acknowledged_at
+                and await escalate(db, obj, "response")
+            ):
+                count += 1
             task = await db.get(Task, obj.task_id) if obj.task_id else None
-            if task and not task.deleted_at and task.status in {"new", "in_progress"} and task.deadline < now:
-                if await escalate(db, obj, "execution"):
-                    count += 1
+            if (
+                task
+                and not task.deleted_at
+                and task.status in {"new", "in_progress"}
+                and task.deadline < now
+                and await escalate(db, obj, "execution")
+            ):
+                count += 1
 
 
 async def claim(db, now=None, limit=100):

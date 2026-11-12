@@ -11,6 +11,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.core.config import get_settings
+from app.core.locks import AI_ANALYSIS
 
 
 async def migrate():
@@ -18,7 +19,7 @@ async def migrate():
     engine = create_async_engine(config.db_url(migrations=True), pool_pre_ping=True)
     try:
         async with engine.connect() as connection:
-            await connection.execute(text("SELECT pg_advisory_lock(178901236)"))
+            await connection.execute(text(f"SELECT pg_advisory_lock({AI_ANALYSIS})"))
             try:
                 process = await asyncio.create_subprocess_exec(
                     sys.executable, "-m", "alembic", "upgrade", "head"
@@ -26,7 +27,7 @@ async def migrate():
                 if await process.wait() != 0:
                     raise RuntimeError("Database migration failed; refusing to start")
             finally:
-                await connection.execute(text("SELECT pg_advisory_unlock(178901236)"))
+                await connection.execute(text(f"SELECT pg_advisory_unlock({AI_ANALYSIS})"))
     finally:
         await engine.dispose()
 

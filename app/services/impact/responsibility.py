@@ -13,8 +13,7 @@ async def recipient(db, identifier, department):
         not found
         or not found.is_active
         or found.role not in {"admin", "director", "manager", "employee"}
-        or found.role in {"manager", "employee"}
-        and found.department_id != department
+        or (found.role in {"manager", "employee"} and found.department_id != department)
     ):
         raise ApiError(422, "RECIPIENT_UNAVAILABLE", "Получатель недоступен в этой области")
     return found

@@ -32,7 +32,7 @@ class Node(Schema):
     context: dict
     updated_at: datetime | None = None
     allowed_actions: list[str]
-    metadata: dict = {}
+    metadata: dict = {}  # noqa: RUF012
 
 
 class Edge(Schema):
@@ -58,7 +58,7 @@ class Graph(Schema):
 class NeighborsQuery(BusinessQuery):
     depth: Annotated[int, Field(ge=1, le=3)] = 1
     direction: Direction = "both"
-    edge_types: list[EdgeType] = []
+    edge_types: list[EdgeType] = []  # noqa: RUF012
 
 
 class PathsQuery(BusinessQuery):
@@ -66,7 +66,7 @@ class PathsQuery(BusinessQuery):
     to_node_id: UUID
     depth: Annotated[int, Field(ge=1, le=3)] = 3
     direction: Direction = "out"
-    edge_types: list[EdgeType] = []
+    edge_types: list[EdgeType] = []  # noqa: RUF012
 
 
 class ActionCreate(Schema):
@@ -108,7 +108,7 @@ class ActionCommand(Schema):
     version: Annotated[int, Field(ge=1)]
     reason: TextValue | None = None
     result: TextValue | None = None
-    result_refs: Annotated[list[EntityRef], Field(max_length=20)] = []
+    result_refs: Annotated[list[EntityRef], Field(max_length=20)] = []  # noqa: RUF012
     verification_note: TextValue | None = None
     assignee_id: UUID | None = None
     execution_due_at: AwareDatetime | None = None

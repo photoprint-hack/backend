@@ -56,7 +56,7 @@ async def setup_work(database, client):
 
 
 async def test_decision_task_verification_history_and_idempotency(client, database, setup_work):
-    people, dept, other, product, customer, headers = setup_work
+    people, dept, _other, _product, _customer, headers = setup_work
     director = await headers("director")
     payload = {
         "title": "Fix issue",
@@ -189,7 +189,7 @@ async def test_order_creation_and_employee_explicit_link(client, database, setup
 
 
 async def test_analyst_cannot_create_and_missing_key_rejected(client, database, setup_work):
-    people, dept, other, product, customer, headers = setup_work
+    people, dept, _other, _product, _customer, headers = setup_work
     payload = {
         "title": "Task",
         "assignee_id": str(people["employee"].id),

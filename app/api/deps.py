@@ -34,10 +34,9 @@ CurrentUser = Annotated[User, Depends(current_user)]
 def check_origin(request: Request):
     config = get_settings()
     origin = request.headers.get("origin")
-    if (
-        origin is not None
-        and origin != config.frontend_url
-        or origin is None
-        and config.app_env == "production"
+    # CSRF backstop for cookie-authenticated routes: reject a mismatching Origin,
+    # and require an Origin header in production.
+    if (origin is not None and origin != config.frontend_url) or (
+        origin is None and config.app_env == "production"
     ):
         raise ApiError(403, "ORIGIN_NOT_ALLOWED", "Недопустимый источник запроса")

@@ -2,6 +2,8 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
+from pydantic import Field
+
 from app.schemas.analytics.metrics import Kpi
 from app.schemas.common import Schema, TextValue
 from app.schemas.shared.query import AnalyticsQuery, SearchQuery
@@ -40,9 +42,25 @@ class AlertOut(Schema):
     severity: Literal["critical"]
     status: Literal["active", "acknowledged", "resolved"]
     allowed_actions: list[str]
+    metric_name: str | None = None
+    department_name: str | None = None
+    product_name: str | None = None
+
+
+class AlertCause(Schema):
+    text: str
+    confirmed: bool
+
+
+class AlertOrder(Schema):
+    id: UUID
+    label: str
+    amount: float | None
 
 
 class AlertCard(Schema):
+    causes: list[AlertCause] = Field(default_factory=list)
+    related_orders: list[AlertOrder] = Field(default_factory=list)
     alert: AlertOut
     metric: Kpi
     decisions: list[NamedObject]

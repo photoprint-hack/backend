@@ -96,13 +96,12 @@ class Settings(BaseSettings):
             raise ValueError("The API contract requires 15-minute access and 7-day refresh tokens")
         if self.cookie_samesite == "none" and not self.cookie_secure:
             raise ValueError("SameSite=none requires Secure cookies")
-        if self.app_env == "production":
-            if (
-                not self.cookie_secure
-                or not self.frontend_url.startswith("https://")
-                or not self.backend_url.startswith("https://")
-            ):
-                raise ValueError("Production requires HTTPS origins and Secure cookies")
+        if self.app_env == "production" and (
+            not self.cookie_secure
+            or not self.frontend_url.startswith("https://")
+            or not self.backend_url.startswith("https://")
+        ):
+            raise ValueError("Production requires HTTPS origins and Secure cookies")
         return self
 
     def db_url(self, *, migrations: bool = False) -> str:

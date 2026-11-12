@@ -112,7 +112,7 @@ async def client(database):
 async def seeded_database(database):
     from app.seed.service import seed
 
-    passwords = {role: "SeedPassword123!" for role in ["admin", "director", "manager", "analyst", "employee"]}
+    passwords = dict.fromkeys(["admin", "director", "manager", "analyst", "employee"], "SeedPassword123!")
     async with database() as db:
         await seed(db, passwords=passwords)
         await db.commit()

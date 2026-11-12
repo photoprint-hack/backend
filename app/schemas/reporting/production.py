@@ -34,6 +34,9 @@ class ProductionOut(Schema):
     lead_time_hours: float
     cause: str | None
     source_system: Literal["erp"]
+    product_name: str | None = None
+    department_name: str | None = None
+    planned_capacity: float | None = None
     created_at: datetime
 
 

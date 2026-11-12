@@ -1,3 +1,4 @@
+from types import SimpleNamespace
 from typing import Annotated, Literal
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -69,8 +70,6 @@ async def sources(db: DB, user: CurrentUser, query: Annotated[ListQuery, Query()
 
 @router.get("/data-quality/overview", response_model=Data[QualityOverview])
 async def overview(db: DB, user: CurrentUser):
-    from types import SimpleNamespace
-
     quality_role(user)
     states = [await source_status(db, source) for source in SOURCES]
     latest = await db.scalar(select(DataQualityRun).order_by(DataQualityRun.checked_at.desc()).limit(1))

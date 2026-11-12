@@ -13,6 +13,7 @@ from app.core.permissions import require_role
 from app.models import AuditLog, User
 from app.schemas.common import Data, Page, Schema, page
 from app.schemas.shared.events import AuditOut
+from app.services.scoping import like_pattern
 from app.services.serialization import columns
 
 router = APIRouter(tags=["audit"])
@@ -77,7 +78,7 @@ async def logs(db: DB, user: CurrentUser, query: Annotated[AuditQuery, Query()])
     if query.search:
         from sqlalchemy import String, cast, or_
 
-        pattern = "%" + query.search.replace("%", "\\%").replace("_", "\\_") + "%"
+        pattern = like_pattern(query.search)
         stmt = stmt.where(
             or_(
                 AuditLog.object_name.ilike(pattern, escape="\\"),

@@ -1,3 +1,5 @@
+import calendar
+from collections import defaultdict
 from datetime import UTC, date, datetime, timedelta
 from typing import Annotated
 from uuid import UUID
@@ -8,7 +10,19 @@ from sqlalchemy import func, select
 from app.api.deps import DB, CurrentUser
 from app.core.exceptions import ApiError
 from app.core.permissions import WRITE_ROLES, require_role, scope_statement
-from app.models import Alert, AuditLog, Decision, Order, Task, User
+from app.models import (
+    Alert,
+    AuditLog,
+    Campaign,
+    Decision,
+    Department,
+    Order,
+    Product,
+    ProductionRecord,
+    SupportInteraction,
+    Task,
+    User,
+)
 from app.schemas.analytics.alerts import AlertCard, AlertOut, AlertPatch, AlertsQuery
 from app.schemas.analytics.dashboard import Dashboard
 from app.schemas.analytics.metrics import (
@@ -24,6 +38,7 @@ from app.schemas.common import Data, Page, Schema, page
 from app.schemas.shared.events import ChangeEvent
 from app.schemas.shared.query import BusinessQuery
 from app.services import analytics, audit, workflow
+from app.services.presentation import alert_context, alert_labels
 from app.services.serialization import columns, serialize_many
 
 router = APIRouter(tags=["analytics"])
@@ -63,7 +78,9 @@ async def dashboard(db: DB, user: CurrentUser, query: Q):
         counts[label] = await db.scalar(select(func.count()).select_from(stmt.subquery()))
         rows = (await db.scalars(stmt.order_by(model.created_at.desc(), model.id).limit(5))).all()
         recent[label] = (
-            [alert_out(row, user) for row in rows] if model is Alert else await serialize_many(db, rows, user)
+            await alert_labels(db, [alert_out(row, user) for row in rows])
+            if model is Alert
+            else await serialize_many(db, rows, user)
         )
     tasks_stmt = scope_statement(
         select(func.count())
@@ -125,11 +142,8 @@ class Recalculate(Schema):
 async def recalculate(payload: Recalculate, request: Request, db: DB, user: CurrentUser):
     require_role(user, {"admin"})
     today = datetime.now(analytics.ZoneInfo(analytics.get_settings().report_timezone)).date()
-    if (
-        payload.date_from
-        and payload.date_from != today.replace(day=1)
-        or payload.date_to
-        and payload.date_to != today
+    if (payload.date_from and payload.date_from != today.replace(day=1)) or (
+        payload.date_to and payload.date_to != today
     ):
         raise ApiError(422, "VALIDATION_ERROR", "Сохранённый пересчёт использует текущий месяц по сегодня")
     result = await analytics.recalculate(db, user, request)
@@ -152,6 +166,13 @@ async def history(code: str, db: DB, user: CurrentUser, query: HQ):
     start, end, _, _ = analytics.period(query)
     if code not in {x[0] for x in analytics.DEFINITIONS}:
         raise ApiError(404, "RESOURCE_NOT_FOUND", "Показатель не найден")
+    if interval == "day" and (end - start).days + 1 > 31:
+        raise ApiError(
+            422,
+            "VALIDATION_ERROR",
+            "Дневная детализация доступна максимум за 31 день; используйте interval=week",
+        )
+    # Demo-scale tradeoff: each period bucket re-runs the full KPI calculation.
     periods = []
     cursor = start
     while cursor <= end:
@@ -160,8 +181,6 @@ async def history(code: str, db: DB, user: CurrentUser, query: HQ):
         elif interval == "week":
             stop = min(end, cursor + timedelta(days=6 - cursor.weekday()))
         else:
-            import calendar
-
             stop = min(end, cursor.replace(day=calendar.monthrange(cursor.year, cursor.month)[1]))
         periods.append((cursor, stop))
         cursor = stop + timedelta(days=1)
@@ -212,10 +231,6 @@ async def history(code: str, db: DB, user: CurrentUser, query: HQ):
 @router.get("/metrics/{code}/breakdown", response_model=BreakdownPage)
 async def breakdown(code: str, db: DB, user: CurrentUser, query: BQ):
     group_by = query.group_by
-    from collections import defaultdict
-
-    from app.models import Campaign, Department, Product, ProductionRecord, SupportInteraction
-
     values, context = await analytics.calculate(db, query, user)
     kpi = next((x for x in values if x["code"] == code), None)
     if not kpi:
@@ -225,6 +240,7 @@ async def breakdown(code: str, db: DB, user: CurrentUser, query: BQ):
     start, end, lo, hi = analytics.period(query)
     grouped = defaultdict(list)
     if group_by in {"department", "product"}:
+        # Demo-scale tradeoff: KPI values are recalculated per breakdown group.
         model = Department if group_by == "department" else Product
         stmt = select(model)
         if group_by == "department" and context["department_id"]:
@@ -357,7 +373,9 @@ def alert_out(row, user):
 async def alerts(db: DB, user: CurrentUser, query: Annotated[AlertsQuery, Query()]):
     require_role(user, {"admin", "director", "manager", "analyst"})
     rows, total = await workflow.list_objects(db, Alert, query, user)
-    return page([alert_out(x, user) for x in rows], total, query.page, query.page_size)
+    return page(
+        await alert_labels(db, [alert_out(x, user) for x in rows]), total, query.page, query.page_size
+    )
 
 
 @router.get("/alerts/{identifier}", response_model=Data[AlertCard])
@@ -382,7 +400,8 @@ async def get_alert(identifier: UUID, db: DB, user: CurrentUser):
         links[name] = [{"id": x.id, "name": x.title} for x in rows]
     return {
         "data": {
-            "alert": alert_out(obj, user),
+            "alert": (await alert_labels(db, [alert_out(obj, user)]))[0],
+            **(await alert_context(db, obj, user)),
             "metric": next(x for x in values if x["code"] == obj.metric_code),
             **links,
             "decisions_url": f"/api/v1/decisions?alert_id={obj.id}",
@@ -417,7 +436,7 @@ async def patch_alert(identifier: UUID, payload: AlertPatch, request: Request, d
         request=request,
     )
     await db.commit()
-    return {"data": alert_out(obj, user)}
+    return {"data": (await alert_labels(db, [alert_out(obj, user)]))[0]}
 
 
 @router.get("/alerts/{identifier}/history", response_model=Page[ChangeEvent])

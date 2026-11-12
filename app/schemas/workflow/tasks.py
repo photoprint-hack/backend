@@ -13,6 +13,7 @@ TaskStatus = Literal["new", "in_progress", "completed", "cancelled"]
 
 
 class TasksQuery(SearchQuery, DateRange):
+    mine: bool | None = None
     department_id: UUID | None = None
     status: TaskStatus | None = None
     priority: Priority | None = None
@@ -58,6 +59,7 @@ class TaskOut(Schema):
     decision_id: UUID | None
     decision: NamedRef | None
     alert_id: UUID | None
+    alert_title: str | None = None
     order_id: UUID | None
     deadline: datetime
     priority: Priority

@@ -10,7 +10,7 @@ async def seed_support(ctx: SeedContext):
     orders = ctx.orders
     add = ctx.add
     for n in range(300):
-        uid, dept, product, customer, created, completed, status, amount, quantity = orders[n]
+        uid, dept, _product, customer, created, _completed, _status, _amount, _quantity = orders[n]
         opened = created + timedelta(hours=1)
         closed = opened + timedelta(hours=8 if n % 5 else 30)
         add(

@@ -78,13 +78,17 @@ async def handle_http(request: Request, exc: HTTPException) -> JSONResponse:
 
 async def handle_database(request: Request, exc: Exception) -> JSONResponse:
     if isinstance(exc, IntegrityError):
+        # Preserve the exact constraint failure for diagnostics without leaking SQL parameters.
+        logging.getLogger("photoprint.db").warning(
+            "Integrity error sqlstate=%s request_id=%s",
+            getattr(exc.orig, "sqlstate", None),
+            getattr(request.state, "request_id", ""),
+        )
         return error_response(request, 409, "DUPLICATE_RESOURCE", "Конфликт или нарушение целостности данных")
     return error_response(request, 503, "DATABASE_UNAVAILABLE", "База данных временно недоступна")
 
 
 async def handle_unknown(request: Request, exc: Exception) -> JSONResponse:
-    import logging
-
     logging.getLogger("photoprint").error(
         "Unhandled exception type=%s request_id=%s",
         type(exc).__name__,

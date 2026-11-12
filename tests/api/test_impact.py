@@ -23,16 +23,16 @@ async def login(client, role):
 async def draft(client, database, headers, kind="task", assignee_role="employee", **extra):
     async with database() as db:
         person = await db.scalar(select(User).where(User.email == assignee_role + "@fotoprint.demo"))
-    payload = dict(
-        type=kind,
-        department_id=str(person.department_id),
-        assignee_id=str(person.id),
-        title="Проверить отклонение",
-        text="Синтетическое поручение",
-        priority="critical",
-        metric_code="on_time_orders",
-        context={},
-    )
+    payload = {
+        "type": kind,
+        "department_id": str(person.department_id),
+        "assignee_id": str(person.id),
+        "title": "Проверить отклонение",
+        "text": "Синтетическое поручение",
+        "priority": "critical",
+        "metric_code": "on_time_orders",
+        "context": {},
+    }
     if kind == "task":
         payload["execution_due_at"] = (datetime.now(UTC) + timedelta(days=2)).isoformat()
     response = await client.post(
@@ -243,19 +243,19 @@ async def test_action_readonly_roles_and_self_verification(client, database, see
 
 def response_content(context):
     ref = context["nodes"][0]["id"]
-    return dict(
-        summary="Причина требует проверки",
-        changes=[],
-        verified_facts=[{"text": "Придуманная причина", "refs": [ref]}],
-        calculated_dependencies=[],
-        correlations=[],
-        hypotheses=[{"text": "Нужно проверить загрузку", "refs": [ref]}],
-        possible_impacts=[],
-        recommendations=[],
-        data_gaps=[],
-        suggested_responsible=None,
-        draft_text="Проверьте отклонение",
-    )
+    return {
+        "summary": "Причина требует проверки",
+        "changes": [],
+        "verified_facts": [{"text": "Придуманная причина", "refs": [ref]}],
+        "calculated_dependencies": [],
+        "correlations": [],
+        "hypotheses": [{"text": "Нужно проверить загрузку", "refs": [ref]}],
+        "possible_impacts": [],
+        "recommendations": [],
+        "data_gaps": [],
+        "suggested_responsible": None,
+        "draft_text": "Проверьте отклонение",
+    }
 
 
 async def test_ai_cache_stale_scope_and_server_evidence(client, database, seeded, monkeypatch):
@@ -269,12 +269,12 @@ async def test_ai_cache_stale_scope_and_server_evidence(client, database, seeded
 
     monkeypatch.setattr(provider, "generate", fake)
     graph = (await client.get("/api/v1/impact-map", headers=seeded)).json()["data"]
-    payload = dict(
-        request_key=str(uuid4()),
-        metric_code="on_time_orders",
-        context={},
-        graph_revision=graph["graph_revision"],
-    )
+    payload = {
+        "request_key": str(uuid4()),
+        "metric_code": "on_time_orders",
+        "context": {},
+        "graph_revision": graph["graph_revision"],
+    }
     first = await client.post("/api/v1/impact-map/analyze", headers=seeded, json=payload)
     assert first.status_code == 200, first.text
     result = first.json()["data"]
@@ -300,12 +300,12 @@ async def test_ai_missing_key_and_bad_reference(client, database, seeded, monkey
     config = get_settings()
     monkeypatch.setattr(config, "openrouter_api_key", None)
     graph = (await client.get("/api/v1/impact-map", headers=seeded)).json()["data"]
-    payload = dict(
-        request_key=str(uuid4()),
-        metric_code="on_time_orders",
-        context={},
-        graph_revision=graph["graph_revision"],
-    )
+    payload = {
+        "request_key": str(uuid4()),
+        "metric_code": "on_time_orders",
+        "context": {},
+        "graph_revision": graph["graph_revision"],
+    }
     assert (await client.post("/api/v1/impact-map/analyze", headers=seeded, json=payload)).status_code == 503
     monkeypatch.setattr(config, "openrouter_api_key", SecretStr("fake-test-key"))
 
@@ -326,13 +326,13 @@ async def test_mary_partial_replay_and_scope(client, database, seeded):
     admin = await login(client, "admin")
     async with database() as db:
         department = await db.scalar(select(Department).where(Department.code == "sales"))
-    record = dict(
-        external_id="test-mary",
-        event_type="lead_qualified",
-        occurred_at=datetime.now(UTC).isoformat(),
-        department_id=str(department.id),
-        channel="demo",
-    )
+    record = {
+        "external_id": "test-mary",
+        "event_type": "lead_qualified",
+        "occurred_at": datetime.now(UTC).isoformat(),
+        "department_id": str(department.id),
+        "channel": "demo",
+    }
     body = {"records": [record, {**record, "external_id": "invalid", "department_id": str(uuid4())}]}
     result = await client.post("/api/v1/integrations/mary/events", headers=admin, json=body)
     assert result.status_code == 200, result.text
@@ -355,12 +355,12 @@ async def test_ai_concurrent_requests_share_provider_and_retry_key(client, datab
 
     monkeypatch.setattr(provider, "generate", fake)
     graph = (await client.get("/api/v1/impact-map", headers=seeded)).json()["data"]
-    payload = dict(
-        request_key=str(uuid4()),
-        metric_code="on_time_orders",
-        context={},
-        graph_revision=graph["graph_revision"],
-    )
+    payload = {
+        "request_key": str(uuid4()),
+        "metric_code": "on_time_orders",
+        "context": {},
+        "graph_revision": graph["graph_revision"],
+    }
     a, b = await asyncio.gather(
         *[client.post("/api/v1/impact-map/analyze", headers=seeded, json=payload) for _ in range(2)]
     )
@@ -385,12 +385,12 @@ async def test_ai_role_change_in_flight_never_returns_old_cache(client, database
 
     monkeypatch.setattr(provider, "generate", fake)
     graph = (await client.get("/api/v1/impact-map", headers=seeded)).json()["data"]
-    payload = dict(
-        request_key=str(uuid4()),
-        metric_code="on_time_orders",
-        context={},
-        graph_revision=graph["graph_revision"],
-    )
+    payload = {
+        "request_key": str(uuid4()),
+        "metric_code": "on_time_orders",
+        "context": {},
+        "graph_revision": graph["graph_revision"],
+    }
     result = await client.post("/api/v1/impact-map/analyze", headers=seeded, json=payload)
     assert result.status_code == 403, result.text
 
@@ -493,16 +493,16 @@ async def test_action_audit_edits_and_replay_after_role_loss(client, database, s
         dept = str(manager.department_id)
         manager_id = str(manager.id)
     key = str(uuid4())
-    payload = dict(
-        type="reminder",
-        department_id=dept,
-        assignee_id=manager_id,
-        title="Исходный текст",
-        text="Синтетический контекст",
-        priority="medium",
-        metric_code="revenue",
-        context={},
-    )
+    payload = {
+        "type": "reminder",
+        "department_id": dept,
+        "assignee_id": manager_id,
+        "title": "Исходный текст",
+        "text": "Синтетический контекст",
+        "priority": "medium",
+        "metric_code": "revenue",
+        "context": {},
+    }
     headers = {**seeded, "Idempotency-Key": key}
     response = await client.post("/api/v1/management-actions", headers=headers, json=payload)
     assert response.status_code == 201, response.text

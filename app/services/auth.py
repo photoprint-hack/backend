@@ -96,7 +96,8 @@ async def refresh(db: AsyncSession, raw: str | None, request: Request):
 
 
 async def logout(db: AsyncSession, user: User, raw: str | None, request: Request):
-    await db.scalar(select(User).where(User.id == user.id).with_for_update())
+    # Lock the user row so a concurrent role change cannot race this logout.
+    await db.get(User, user.id, with_for_update=True)
     if raw:
         # Match the stored digest as well as ownership; invalid cookies cannot revoke another user.
         await db.execute(

@@ -15,15 +15,11 @@ async def validate_pair(db, order, deal):
     if (
         order.customer_id != deal.customer_id
         or order.department_id != deal.department_id
-        or deal.product_id is not None
-        and order.product_id != deal.product_id
+        or (deal.product_id is not None and order.product_id != deal.product_id)
     ):
         raise OrderDealLinkError("Сделка не соответствует клиенту, подразделению или продукту заказа")
-    if (
-        deal.order_id is not None
-        and deal.order_id != order.id
-        or order.crm_deal_id is not None
-        and order.crm_deal_id != deal.id
+    if (deal.order_id is not None and deal.order_id != order.id) or (
+        order.crm_deal_id is not None and order.crm_deal_id != deal.id
     ):
         raise OrderDealLinkError("Заказ или сделка уже связаны с другим объектом")
     if deal.id is not None:

@@ -7,8 +7,8 @@ from app.models.reporting.finance import FINANCE_TYPES, FinanceRecord
 from app.models.reporting.hr import HRSnapshot
 
 __all__ = [
-    "Alert",
     "FINANCE_TYPES",
+    "Alert",
     "FinanceRecord",
     "ForecastRecord",
     "HRSnapshot",

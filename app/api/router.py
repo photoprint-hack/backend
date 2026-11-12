@@ -34,3 +34,7 @@ api_router.include_router(audit_router)
 from app.api.v1.impact import router as impact_router  # noqa: E402
 
 api_router.include_router(impact_router)
+
+from app.api.v1.mock_sources import router as mock_sources_router  # noqa: E402
+
+api_router.include_router(mock_sources_router)

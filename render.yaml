@@ -18,9 +18,9 @@ services:
       - key: JWT_SECRET_KEY
         generateValue: true
       - key: FRONTEND_URL
-        sync: false
+        value: https://photoprint-frontend.vercel.app
       - key: BACKEND_URL
-        sync: false
+        value: https://backend-v8pa.onrender.com
       - key: COOKIE_SECURE
         value: "true"
       - key: COOKIE_SAMESITE

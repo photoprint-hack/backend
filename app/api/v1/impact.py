@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 from typing import Annotated, Literal
+from urllib.parse import urlencode
 from uuid import UUID
 
 from fastapi import APIRouter, Header, Query, Request
@@ -8,6 +9,7 @@ from sqlalchemy import func, select, text
 
 from app.api.deps import DB, CurrentUser
 from app.core.exceptions import ApiError
+from app.core.locks import RESPONSIBILITY
 from app.core.permissions import WRITE_ROLES, department_scope, require_role
 from app.models import Alert, AuditLog, Decision, Department, Order, OrderEvent, Task
 from app.models.impact import ManagementAction, MaryEvent, Notification, NotificationOutbox
@@ -82,8 +84,6 @@ async def impact_node(node_id: str, db: DB, user: CurrentUser, query: Q):
                 await serialize_many(db, [await workflow.scoped(db, model, UUID(ref["id"]), user)], user)
             )[0]
         elif ref["type"] == "metric":
-            from urllib.parse import urlencode
-
             context = {key: str(value) for key, value in full["context"].items() if value is not None}
             detail = {
                 **node["metadata"],
@@ -342,7 +342,7 @@ async def department_get(department_id: UUID, db: DB, user: CurrentUser):
 async def department_put(
     department_id: UUID, payload: DepartmentAssignment, request: Request, db: DB, user: CurrentUser
 ):
-    await db.execute(text("SELECT pg_advisory_xact_lock(178901238)"))
+    await db.execute(text(f"SELECT pg_advisory_xact_lock({RESPONSIBILITY})"))
     row = await responsibility.department_assignment(db, department_id, user, payload, request)
     result = columns(row)
     await db.commit()
@@ -357,7 +357,7 @@ async def metric_get(code: str, db: DB, user: CurrentUser, department_id: UUID |
 
 @router.put("/responsibilities/metrics/{code}", response_model=Data[dict])
 async def metric_put(code: str, payload: MetricAssignment, request: Request, db: DB, user: CurrentUser):
-    await db.execute(text("SELECT pg_advisory_xact_lock(178901238)"))
+    await db.execute(text(f"SELECT pg_advisory_xact_lock({RESPONSIBILITY})"))
     row = await responsibility.metric_assignment(db, code, payload.department_id, user, payload, request)
     result = columns(row)
     await db.commit()

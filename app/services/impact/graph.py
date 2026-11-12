@@ -24,7 +24,7 @@ def digest(value):
 
 def explore(graph, origin, depth=1, direction="both", edge_types=(), target=None):
     nodes = {n["id"]: n for n in graph["nodes"]}
-    if origin not in nodes or target and target not in nodes:
+    if origin not in nodes or (target and target not in nodes):
         raise ApiError(404, "RESOURCE_NOT_FOUND", "Узел не найден в разрешённом контексте")
     adjacent = {key: [] for key in nodes}
     for edge in graph["edges"]:
@@ -80,16 +80,16 @@ async def build(db, query, user):
     truncated = False
 
     def node(key, kind, label, *, ref=None, status=None, updated=None, metadata=None):
-        nodes[key] = dict(
-            id=key,
-            type=kind,
-            label=label,
-            description=label,
-            entity_ref=ref,
-            status=status,
-            context=context,
-            updated_at=updated,
-            allowed_actions=["read", "neighbors"]
+        nodes[key] = {
+            "id": key,
+            "type": kind,
+            "label": label,
+            "description": label,
+            "entity_ref": ref,
+            "status": status,
+            "context": context,
+            "updated_at": updated,
+            "allowed_actions": ["read", "neighbors"]
             + (["analyze"] if kind == "metric" and user.role != "employee" else [])
             + (
                 ["create_action"]
@@ -98,22 +98,22 @@ async def build(db, query, user):
                 and ref["type"] in {"metric", "order", "task", "decision", "alert"}
                 else []
             ),
-            metadata=metadata or {},
-        )
+            "metadata": metadata or {},
+        }
 
     def link(source, target, kind, evidence="verified", refs=None):
         if source in nodes and target in nodes:
             edges.append(
-                dict(
-                    id=digest([source, target, kind])[:32],
-                    source=source,
-                    target=target,
-                    type=kind,
-                    evidence_type=evidence,
-                    description="Связь по данным платформы; не доказательство причинности",
-                    evidence_source="platform",
-                    evidence_refs=refs or [source, target],
-                )
+                {
+                    "id": digest([source, target, kind])[:32],
+                    "source": source,
+                    "target": target,
+                    "type": kind,
+                    "evidence_type": evidence,
+                    "description": "Связь по данным платформы; не доказательство причинности",
+                    "evidence_source": "platform",
+                    "evidence_refs": refs or [source, target],
+                }
             )
 
     if user.role != "employee":

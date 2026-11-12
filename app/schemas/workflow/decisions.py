@@ -13,6 +13,7 @@ DecisionStatus = Literal["new", "in_progress", "needs_review", "completed", "can
 
 
 class DecisionsQuery(SearchQuery, DateRange):
+    product_id: UUID | None = None
     department_id: UUID | None = None
     status: DecisionStatus | None = None
     priority: Priority | None = None
@@ -67,6 +68,7 @@ class DecisionOut(Schema):
     created_by: UUID
     creator: UserRef
     alert_id: UUID | None
+    alert_title: str | None = None
     deadline: datetime
     priority: Priority
     status: DecisionStatus

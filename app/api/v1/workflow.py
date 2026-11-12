@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 
 from app.api.deps import DB, CurrentUser
 from app.core.exceptions import ApiError
+from app.core.locks import RECALCULATION
 from app.core.permissions import WRITE_ROLES, require_role
 from app.models import AuditLog, Decision, DecisionHistory, Order, OrderEvent, Task, User
 from app.schemas.common import Data, Page, page
@@ -43,7 +44,7 @@ async def created(model, payload, key, db, user, request):
     if model is Order:
         from sqlalchemy import text
 
-        await db.execute(text("SELECT pg_advisory_xact_lock(178901234)"))
+        await db.execute(text(f"SELECT pg_advisory_xact_lock({RECALCULATION})"))
     obj = await workflow.create(db, model, payload, user, request)
     if model is Order:
         from app.services.analytics import recalculate
@@ -62,7 +63,7 @@ async def modified(model, identifier, payload, db, user, request):
     if model is Order:
         from sqlalchemy import text
 
-        await db.execute(text("SELECT pg_advisory_xact_lock(178901234)"))
+        await db.execute(text(f"SELECT pg_advisory_xact_lock({RECALCULATION})"))
     obj = await workflow.scoped(db, model, identifier, user, lock=True)
     await workflow.patch(db, model, obj, payload, user, request)
     if model is Order:

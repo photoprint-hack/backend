@@ -82,29 +82,29 @@ async def links(database, minimal_admin):
 
 
 def order_data(links):
-    return dict(
-        customer_id=str(links.customers[0].id),
-        department_id=str(links.departments[0].id),
-        product_id=str(links.products[0].id),
-        quantity=1,
-        amount=10,
-        channel="web",
-        due_at=(datetime.now(UTC) + timedelta(days=1)).isoformat(),
-        crm_deal_id=str(links.free_deal.id),
-    )
+    return {
+        "customer_id": str(links.customers[0].id),
+        "department_id": str(links.departments[0].id),
+        "product_id": str(links.products[0].id),
+        "quantity": 1,
+        "amount": 10,
+        "channel": "web",
+        "due_at": (datetime.now(UTC) + timedelta(days=1)).isoformat(),
+        "crm_deal_id": str(links.free_deal.id),
+    }
 
 
 def deal_data(links):
-    return dict(
-        customer_id=str(links.customers[0].id),
-        department_id=str(links.departments[0].id),
-        product_id=str(links.products[0].id),
-        channel="web",
-        segment="test",
-        stage="qualified",
-        expected_amount=10,
-        order_id=str(links.free_order.id),
-    )
+    return {
+        "customer_id": str(links.customers[0].id),
+        "department_id": str(links.departments[0].id),
+        "product_id": str(links.products[0].id),
+        "channel": "web",
+        "segment": "test",
+        "stage": "qualified",
+        "expected_amount": 10,
+        "order_id": str(links.free_order.id),
+    }
 
 
 def mismatch(data, links, case, *, is_order):
@@ -121,7 +121,12 @@ def mismatch(data, links, case, *, is_order):
 
 
 def record(entity, data, external="LINK-IMPORT"):
-    return dict(entity_type=entity, external_id=external, event_at=datetime.now(UTC).isoformat(), data=data)
+    return {
+        "entity_type": entity,
+        "external_id": external,
+        "event_at": datetime.now(UTC).isoformat(),
+        "data": data,
+    }
 
 
 @pytest.mark.parametrize("case", ["customer", "department", "product", "occupied", "reverse"])

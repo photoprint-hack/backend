@@ -13,6 +13,7 @@ class CustomersQuery(SearchQuery, DateRange):
 
 
 class CustomerOut(Schema):
+    source: Literal["crm"] = "crm"
     id: UUID
     external_id: str | None
     name: str

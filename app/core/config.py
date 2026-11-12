@@ -30,10 +30,6 @@ class Settings(BaseSettings):
     port: int = 8000
     demo_mode: bool = False
     demo_reference_date: str | None = None
-    metabase_url: str | None = None
-    metabase_embedding_secret: SecretStr | None = None
-    metabase_dashboard_ids: dict[str, int] = {}
-    metabase_verified_dashboards: list[str] = []
     ai_provider: Literal["openrouter"] = "openrouter"
     openrouter_api_key: SecretStr | None = None
     openrouter_model: str = "openrouter/free"

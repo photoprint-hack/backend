@@ -21,9 +21,6 @@ os.environ["FRONTEND_URL"] = "http://localhost:5173"
 os.environ["BACKEND_URL"] = "http://localhost:8000"
 os.environ["REPORT_TIMEZONE"] = "Europe/Minsk"
 os.environ["OPENROUTER_API_KEY"] = ""
-os.environ["METABASE_URL"] = ""
-os.environ["METABASE_DASHBOARD_IDS"] = "{}"
-os.environ["METABASE_VERIFIED_DASHBOARDS"] = "[]"
 for role in ["ADMIN", "DIRECTOR", "MANAGER", "ANALYST", "EMPLOYEE"]:
     os.environ["DEMO_" + role + "_PASSWORD"] = "SeedPassword123!"
 
@@ -75,6 +72,13 @@ async def database(project_root):
                         extra = importlib.util.module_from_spec(extra_spec)
                         extra_spec.loader.exec_module(extra)
                         extra.upgrade()
+                    removal_spec = importlib.util.spec_from_file_location(
+                        "remove_bi_revision",
+                        project_root / "alembic/versions/20261112_06_remove_metabase.py",
+                    )
+                    removal = importlib.util.module_from_spec(removal_spec)
+                    removal_spec.loader.exec_module(removal)
+                    removal.upgrade()
 
             await conn.run_sync(migrate)
         factory = async_sessionmaker(engine, expire_on_commit=False)

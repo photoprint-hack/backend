@@ -1,7 +1,6 @@
 """Compatibility exports; definitions live in domain modules."""
 
 from app.schemas.analytics.alerts import AlertCard, AlertOut
-from app.schemas.analytics.bi import BIEmbed
 from app.schemas.analytics.dashboard import Dashboard
 from app.schemas.analytics.forecast import Forecast, ForecastWeek
 from app.schemas.analytics.metrics import (
@@ -40,7 +39,6 @@ __all__ = [
     "AuditOut",
     "BDDS",
     "BDR",
-    "BIEmbed",
     "BreakdownPage",
     "BreakdownRow",
     "CampaignOut",

@@ -55,3 +55,12 @@ async def test_openapi_bearer_and_responses(public_client):
     assert "/api/v1/auth/login" in schema["paths"]
     assert "201" in schema["paths"]["/api/v1/users"]["post"]["responses"]
     assert "/api/v1/health" not in schema["paths"]
+
+
+async def test_retired_metabase_endpoint_is_absent(public_client):
+    response = await public_client.get("/api/v1/analytics/metabase-embed")
+    assert response.status_code == 404
+    schema = (await public_client.get("/openapi.json")).json()
+    assert "/api/v1/analytics/metabase-embed" not in schema["paths"]
+    assert "BIEmbed" not in schema["components"]["schemas"]
+    assert "Data_BIEmbed_" not in schema["components"]["schemas"]

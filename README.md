@@ -72,7 +72,7 @@ Seed требует все пять паролей. Учётные данные 
 - Периоды `date_from`/`date_to` включительны, календарь `Europe/Minsk`, время хранится в UTC. Неизвестные query-параметры отклоняются; диапазон ограничен 366 днями.
 - `null`/`no_data` означает отсутствие источника или неопределённую долю. Пустая загруженная сумма/счётчик — 0. HR и общие расходы не распределяются по продуктам; ответ содержит `ignored_filters`.
 
-Группы API: `/users`, `/departments`, `/products`, `/customers`, `/campaigns`, `/orders`, `/sales/*`, `/production/*`, `/finance/*`, `/hr/summary`, `/support/interactions`, `/dashboard`, `/metrics`, `/alerts`, `/decisions`, `/tasks`, `/forecast`, `/integrations`, `/data-quality/*`, `/audit-logs`, `/analytics/metabase-embed`. Точные тела и ответы — в OpenAPI. Для передачи схему можно выгрузить без соединения с БД:
+Группы API: `/users`, `/departments`, `/products`, `/customers`, `/campaigns`, `/orders`, `/sales/*`, `/production/*`, `/finance/*`, `/hr/summary`, `/support/interactions`, `/dashboard`, `/metrics`, `/alerts`, `/decisions`, `/tasks`, `/forecast`, `/integrations`, `/data-quality/*`, `/audit-logs`. Точные тела и ответы — в OpenAPI. Для передачи схему можно выгрузить без соединения с БД:
 
 ```sh
 uv run python scripts/export_openapi.py
@@ -151,17 +151,15 @@ CSV имеет четыре колонки: `entity_type,external_id,event_at,da
 
 `POST /integrations/mary/events` доступен admin и принимает `records`: `external_id`, `event_type`, `occurred_at`, `department_id`, необязательный `order_id`, `channel=web|phone|demo`. Времена с часовым поясом; будущее отклоняется. Идентификатор и время события обеспечивают upsert/replay; корректные записи сохраняются при ошибках ссылок в других записях. Mary явно simulated; переписка и произвольные персональные metadata не принимаются. Прежние пять импортов не менялись.
 
-## Metabase
+## Изменение аналитической интеграции
 
-В текущую выкладку Metabase не входит по решению пользователя. Его код и BI views сохраняются для следующего этапа. Для этой выкладки оставьте `METABASE_URL` и `METABASE_EMBEDDING_SECRET` незаданными, `METABASE_DASHBOARD_IDS={}` и `METABASE_VERIFIED_DASHBOARDS=[]`: endpoint отвечает `503 BI_UNAVAILABLE`. Остальные API и worker от Metabase не зависят.
+Интеграция Metabase удалена: `/api/v1/analytics/metabase-embed` больше не существует (404), переменные `METABASE_*` не используются. Dashboard, KPI, сводки и прогноз доступны через API приложения. Frontend должен убрать iframe и запросы к удалённому endpoint.
 
-Подписанный embed реализован с отдельным секретом, сроком пять минут и закреплённым подразделением manager. По умолчанию API возвращает **503 BI_UNAVAILABLE** до настройки и проверки dashboard. Общая публичная ссылка не используется.
-
-Порядок настройки отдельного Metabase, SQL-шаблоны карточек и проверка изоляции — в [bi/README.md](bi/README.md). `METABASE_VERIFIED_DASHBOARDS` заполняется только после проверки каждой карточки. Наличие JWT само по себе не гарантирует фильтрацию SQL. Metabase должен читать исключительно восемь BI-представлений через отдельную роль, не таблицы приложения.
+Миграция `20261112_06` удаляет восемь SQL views бывшей интеграции, сохраняя таблицы и данные приложения. Предыдущие ревизии сохранены для существующих баз; downgrade восстанавливает определения views без прежних грантов. Миграция применяется обычным запуском Alembic или при старте контейнера. Отдельная роль PostgreSQL, если её создавали вручную, автоматически не удаляется.
 
 ## Render и Docker
 
-[render.yaml](render.yaml) описывает Backend с автоматическим деплоем из Git; секреты вводятся в Render, в YAML их нет. Metabase разворачивается отдельным сервисом с отдельной постоянной БД настроек. Настройки обоих сервисов — в [bi/README.md](bi/README.md).
+[render.yaml](render.yaml) описывает Backend с автоматическим деплоем из Git; секреты вводятся в Render, в YAML их нет.
 
 GitHub CI запускает Ruff и тесты на PostgreSQL 17, проверяет актуальность OpenAPI, собирает Docker-образ и сканирует его. Сам workflow ещё не запускался на GitHub. Автодеплой Render пока настроен на каждый commit, независимо от результата CI; для обязательного ожидания проверок выберите соответствующий режим в Render.
 
@@ -174,7 +172,7 @@ docker build -t photoprint-backend .
 docker run --rm --env-file .env -p 8000:8000 photoprint-backend
 ```
 
-Внутри Docker `localhost` указывает на контейнер: строка БД должна вести к доступному хосту. Образ здесь не собирался: доступный Docker daemon отсутствовал. Деплой на Render и работа с удалённой PostgreSQL/Metabase требуют отдельной проверки в целевом окружении.
+Внутри Docker `localhost` указывает на контейнер: строка БД должна вести к доступному хосту. Образ здесь не собирался: доступный Docker daemon отсутствовал. Деплой на Render и работа с удалённой PostgreSQL требуют отдельной проверки в целевом окружении.
 
 При неудачном релизе верните предыдущий успешный deploy в Render и проверьте `/health`, login и Dashboard. Миграции автоматически назад не откатываются. Перед миграциями сохраняйте резервную копию; downgrade удаляет данные и применяется только к заведомо одноразовой базе.
 
@@ -186,7 +184,7 @@ docker run --rm --env-file .env -p 8000:8000 photoprint-backend
 | --- | --- | --- |
 | `tests/unit/` | Изолированные функции, валидация, календарь, BFS, security и mock адаптеров; без БД | `uv run pytest -q tests/unit` |
 | `tests/api/` | HTTP-контракты, роли, workflow и ответы endpoint; большинство используют PostgreSQL | `./sh/test_postgres.sh -q tests/api` |
-| `tests/integration/` | Прямые проверки seed, миграций, BI SQL/прав, worker/outbox, импорта файлов и shell-процессов | `./sh/test_postgres.sh -q tests/integration` |
+| `tests/integration/` | Прямые проверки seed, миграций, worker/outbox, импорта файлов и shell-процессов | `./sh/test_postgres.sh -q tests/integration` |
 
 API-тест может использовать БД для подготовки и проверки сохранения данных. В `integration` проверяемая граница — взаимодействие сервисов, SQL или процесса, а не HTTP-ответ. Реальные сетевые AI-запросы в автоматические группы не входят; provider подменяется mock.
 
@@ -205,16 +203,16 @@ uv run --python 3.12 --no-project --with pgserver python scripts/test_postgres.p
 
 Python 3.12 нужен только оболочке `pgserver` с готовыми бинарниками. Она запускает тесты интерпретатором проекта Python 3.13, создаёт временный сервер и удаляет его после выполнения. Требуются доступ к пакетам при первом запуске и право запускать локальные процессы/сокеты.
 
-Либо задайте `TEST_DATABASE_URL` на отдельную тестовую PostgreSQL 15+ и выполните `uv run pytest -q`. Тесты создают и удаляют случайные схемы. Не указывайте production: тестовая роль должна иметь права CREATE SCHEMA. Проверка BI-роли дополнительно требует CREATE ROLE и пропускается, если его нет. Без `TEST_DATABASE_URL` проверки, которым нужна БД, явно пропускаются в обеих группах `api` и `integration`. Unit-группа и `tests/api/test_http_contract.py` БД не требуют. GitHub Actions запускает три группы отдельными шагами.
+Либо задайте `TEST_DATABASE_URL` на отдельную тестовую PostgreSQL 15+ и выполните `uv run pytest -q`. Тесты создают и удаляют случайные схемы. Не указывайте production: тестовая роль должна иметь права CREATE SCHEMA. Без `TEST_DATABASE_URL` проверки, которым нужна БД, явно пропускаются в обеих группах `api` и `integration`. Unit-группа и `tests/api/test_http_contract.py` БД не требуют. GitHub Actions запускает три группы отдельными шагами.
 
-Проверяются ротация refresh/reuse, роли и изоляция подразделений, полный жизненный цикл решений/задач, история, конкурентные PATCH и Idempotency-Key, KPI/пороговые значения, seed, частичный импорт, качество, прогноз, финансовая сверка, подписи BI и ограниченная роль PostgreSQL. Визуальный Frontend и живой Metabase этими тестами не проверяются.
+Проверяются ротация refresh/reuse, роли и изоляция подразделений, полный жизненный цикл решений/задач, история, конкурентные PATCH и Idempotency-Key, KPI/пороговые значения, seed, частичный импорт, качество, прогноз, финансовая сверка. Визуальный Frontend этими тестами не проверяется.
 
 ## Структура
 
 - `app/api/v1/` — маршруты и права на действия.
 - `app/schemas/` — предметные пакеты `catalog/`, `workflow/`, `analytics/`, `reporting/`, `integrations/`, общие query/ссылки/история в `shared/`. Небольшие `domain.py` и `responses.py` сохраняют старые импорты; новый код импортирует конкретный модуль.
 - `app/services/` — бизнес-правила, расчёты, импорт, аудит.
-- `app/models/` — 29 таблиц PostgreSQL в пакетах `orders/`, `analytics/`, `reporting/`, `operations/`; `identity.py` и `workflow.py` объединяют небольшие связанные модели. `alembic/versions/` — фиксированные миграции и BI views.
+- `app/models/` — 29 таблиц PostgreSQL в пакетах `orders/`, `analytics/`, `reporting/`, `operations/`; `identity.py` и `workflow.py` объединяют небольшие связанные модели. `alembic/versions/` — фиксированные миграции.
 - `app/seed/` — `service.py` координирует этапы из `stages/`: справочники, заказы, поддержка, планы, источники и демосценарий. `context.py` хранит состояние загрузки и стабильные идентификаторы; порядок этапов и транзакция сохраняются.
 - `scripts/` — seed, импорт, экспорт OpenAPI, старт с миграциями, изолированные тесты.
 - `sh/` — Bash-обёртки этих Python-скриптов; запускаются из любой директории.

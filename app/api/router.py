@@ -3,7 +3,6 @@ from fastapi import APIRouter
 from app.api.v1.analytics import router as analytics_router
 from app.api.v1.audit import router as audit_router
 from app.api.v1.auth import router as auth_router
-from app.api.v1.bi import router as bi_router
 from app.api.v1.catalog import router as catalog_router
 from app.api.v1.data_quality import router as data_quality_router
 from app.api.v1.forecast import router as forecast_router
@@ -31,7 +30,6 @@ api_router.include_router(data_quality_router)
 api_router.include_router(imports_router)
 
 api_router.include_router(audit_router)
-api_router.include_router(bi_router)
 
 from app.api.v1.impact import router as impact_router  # noqa: E402
 

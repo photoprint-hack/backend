@@ -1,4 +1,4 @@
-# Backend only. Metabase is an independent service; see bi/README.md.
+# Backend API service.
 services:
   - type: web
     name: photoprint-backend

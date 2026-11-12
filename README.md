@@ -1,37 +1,121 @@
-# Photoprint backend
+# Photoprint backend — управленческая платформа
 
-Backend MVP управленческой платформы «Фотопринт»: 12 KPI, заказы и CRM-воронка, производство, финансы и HR, цепочка Alert → решение → задача → проверка результата, прогноз на четыре недели, импорт пяти источников, качество данных и аудит. Все демосуммы синтетические, валюта BYN. Расширение v2.0 добавляет карту влияния, OpenRouter-анализ, управленческие обращения, внутренние уведомления и SLA.
+Backend трека 1 хакатона: 12 KPI, заказы и CRM-воронка, производство, финансы и HR,
+цепочка «отклонение → решение → задача → проверка результата», прогноз на четыре
+недели, импорт пяти источников, качество данных и аудит. Все демосуммы синтетические,
+валюта BYN.
 
-Python 3.13, FastAPI, PostgreSQL **15+**, SQLAlchemy async и Alembic. Версии и лицензии пакетов — в [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md). Frontend разрабатывается отдельно. Публичная схема доступна на `/openapi.json`, Swagger — `/docs`.
+- Опубликованный API: [backend-v8pa.onrender.com](https://backend-v8pa.onrender.com).
+- Swagger: [backend-v8pa.onrender.com/docs](https://backend-v8pa.onrender.com/docs).
+- OpenAPI: [backend-v8pa.onrender.com/openapi.json](https://backend-v8pa.onrender.com/openapi.json).
+- Frontend: [photoprint-frontend.vercel.app](https://photoprint-frontend.vercel.app).
 
-## Локальный запуск
+Стек: Python 3.13, FastAPI, PostgreSQL 15+, SQLAlchemy async, Alembic.
+Версии и лицензии пакетов — в [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
 
-Нужны `uv` и доступная PostgreSQL. Из корня проекта:
+## Быстрый запуск
+
+Нужны `uv`, Docker или уже установленный PostgreSQL 15+, и Node.js для frontend.
+Команды ниже выполняются из корня Backend.
+
+### 1. Подготовить PostgreSQL
+
+Если PostgreSQL ещё нет, для локальной демонстрации можно запустить контейнер:
+
+```sh
+docker run --name photoprint-postgres --rm \
+  -e POSTGRES_USER=postgres \
+  -e POSTGRES_PASSWORD=postgres \
+  -e POSTGRES_DB=photoprint \
+  -p 5432:5432 \
+  -d postgres:17
+```
+
+Пароль `postgres` показан только для локального контейнера. Если порт `5432`
+занят, используйте установленный PostgreSQL и измените `DATABASE_URL`.
+
+### 2. Установить зависимости и настроить `.env`
 
 ```sh
 uv sync --frozen
 cp -n .env.example .env
 ```
 
-Заполните `.env`: `DATABASE_URL`, случайный `JWT_SECRET_KEY` длиной от 32 байт и пять разных `DEMO_*_PASSWORD` длиной 12–128 символов. Секрет можно получить командой:
+В `.env` обязательно задайте:
+
+- `DATABASE_URL=postgresql+asyncpg://postgres:postgres@localhost:5432/photoprint`;
+- `JWT_SECRET_KEY` длиной не менее 32 байт;
+- пять разных `DEMO_*_PASSWORD` длиной 12–128 символов.
+
+Секрет можно сгенерировать командой:
 
 ```sh
 uv run python -c 'import secrets; print(secrets.token_urlsafe(48))'
 ```
 
-Не заменяйте существующий `.env` шаблоном. Обычный PostgreSQL URL и `postgresql+asyncpg://` поддерживаются; `sslmode=require` преобразуется для asyncpg. Для миграций укажите прямое или session-pool соединение в `MIGRATION_DATABASE_URL`, если основной URL использует transaction pooler. Пользователь миграций должен иметь права создания таблиц и представлений.
+Не заменяйте существующий `.env` шаблоном. Обычный PostgreSQL URL и
+`postgresql+asyncpg://` поддерживаются; `sslmode=require` преобразуется для
+asyncpg. Для облачного transaction pooler задайте прямое/session-соединение в
+`MIGRATION_DATABASE_URL`.
+
+### 3. Создать схему и демоданные
 
 Следующие команды **меняют базу из `.env`**. Перед запуском проверьте её назначение:
 
 ```sh
 uv run alembic upgrade head
 uv run python scripts/seed.py
+```
+
+Seed создаёт 500 заказов, 200 клиентов, 300 обращений, сделки, производство,
+финансы, HR, дневные планы, критическое отклонение и дефицит мощности. Обычный
+повторный seed добавляет отсутствующие записи и сохраняет пароли и действия
+пользователей.
+
+### 4. Запустить API
+
+```sh
 ./start.sh --reload
 ```
 
-Сервер: `http://localhost:8000`. `GET /health` проверяет соединение с базой: 200 при успехе, 503 при недоступности. Отдельного маршрута `/health/db` нет. `start.sh` запускает сервер; миграции и seed автоматически не выполняет. `PORT` меняет порт.
+Сервер: [http://localhost:8000](http://localhost:8000).
+Health: [http://localhost:8000/health](http://localhost:8000/health). `GET /health`
+возвращает 200 при доступной БД и 503 при недоступной. Переменная `PORT` меняет
+порт. `start.sh` не запускает миграции или seed автоматически.
 
-Повторный seed добавляет отсутствующие записи, сохраняет пароли и изменения пользователей. Набор содержит 500 заказов, 200 клиентов, 300 обращений, сделки, производство, финансы, HR, дневные планы и сценарий с критическим отклонением и дефицитом мощности. `DEMO_REFERENCE_DATE=YYYY-MM-DD` фиксирует опорную дату при первоначальном заполнении; без него используется текущая дата Минска. Для новой демонстрационной даты создайте отдельную базу: обычный seed не переносит уже созданные факты.
+### 5. Запустить frontend
+
+Frontend находится в отдельном репозитории `photoprint-frontend`, каталог с
+`package.json` — `photoprint-frontend/frontend`.
+
+```sh
+cd ../photoprint-frontend/frontend
+npm ci
+cp -n .env.example .env.local
+```
+
+Для локального API установите в `.env.local`:
+
+```env
+VITE_API_URL=http://localhost:8000/api/v1
+VITE_USE_MOCKS=false
+```
+
+Затем:
+
+```sh
+npm run dev
+```
+
+Интерфейс откроется на [http://localhost:5173](http://localhost:5173). Если нужен
+только UI без PostgreSQL и Backend, задайте `VITE_API_URL=` и
+`VITE_USE_MOCKS=true`.
+
+`DEMO_REFERENCE_DATE=YYYY-MM-DD` фиксирует опорную дату при первоначальном
+заполнении; без него используется текущая дата Минска. Для новой демонстрационной
+даты создайте отдельную базу: обычный seed не переносит уже созданные факты.
+
+## Демо-учётные записи
 
 | Логин | Пароль из окружения | Доступ |
 | --- | --- | --- |
@@ -42,7 +126,13 @@ uv run python scripts/seed.py
 | `production.manager@fotoprint.demo` | `DEMO_MANAGER_PASSWORD` при первом seed | Руководитель производства, отдельная область и получатель эскалаций |
 | `employee@fotoprint.demo` | `DEMO_EMPLOYEE_PASSWORD` | Свои задачи и прямо связанные заказы/решения |
 
-Seed требует все пять паролей. Учётные данные в репозитории не хранятся. `POST /api/v1/demo/reset` доступен только admin при `DEMO_MODE=true` вне production и требует `{"confirm":"RESET_DEMO_DATA"}`. Он восстанавливает известные демозаписи, архивирует задачи и сохраняет историю/аудит/пароли. При обнаружении сторонних фактов возвращает 409. Для production маршрут не регистрируется.
+Seed требует все пять паролей. В Backend-репозитории пароли не хранятся; текущие
+публичные значения синтетических демоаккаунтов дублируются frontend-репозиторием
+для автоподстановки, поэтому при ротации их нужно синхронизировать. `POST /api/v1/demo/reset`
+доступен только admin при `DEMO_MODE=true` вне production и требует
+`{"confirm":"RESET_DEMO_DATA"}`. Он восстанавливает известные демозаписи, архивирует
+задачи и сохраняет историю/аудит/пароли. При обнаружении сторонних фактов возвращает
+409. Для production маршрут не регистрируется.
 
 ## Shell-обёртки
 
@@ -206,6 +296,10 @@ Python 3.12 нужен только оболочке `pgserver` с готовы�
 Либо задайте `TEST_DATABASE_URL` на отдельную тестовую PostgreSQL 15+ и выполните `uv run pytest -q`. Тесты создают и удаляют случайные схемы. Не указывайте production: тестовая роль должна иметь права CREATE SCHEMA. Без `TEST_DATABASE_URL` проверки, которым нужна БД, явно пропускаются в обеих группах `api` и `integration`. Unit-группа и `tests/api/test_http_contract.py` БД не требуют. GitHub Actions запускает три группы отдельными шагами.
 
 Проверяются ротация refresh/reuse, роли и изоляция подразделений, полный жизненный цикл решений/задач, история, конкурентные PATCH и Idempotency-Key, KPI/пороговые значения, seed, частичный импорт, качество, прогноз, финансовая сверка. Визуальный Frontend этими тестами не проверяется.
+
+Результат на 2026-11-12: полный набор на временной PostgreSQL — **131 passed**;
+`tests/unit` + HTTP-контракт — **48 passed**; Ruff и format-check — без ошибок.
+Опубликованный `/health` вернул HTTP 200 с подключённой базой.
 
 ## Структура
 

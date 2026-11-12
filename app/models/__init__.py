@@ -1,2 +1,63 @@
-# Import ORM models here so SQLAlchemy and Alembic autogenerate can see them.
-# Example: from app.models.example import Example
+from app.models.analytics import (
+    Alert,
+    FinanceRecord,
+    ForecastRecord,
+    HRSnapshot,
+    Metric,
+    MetricTarget,
+    MetricValue,
+)
+from app.models.identity import Department, RefreshToken, User
+from app.models.operations import (
+    AuditLog,
+    DataQualityIssue,
+    DataQualityRun,
+    IdempotencyKey,
+    SourceRecord,
+    SourceSyncRun,
+)
+from app.models.orders import (
+    Campaign,
+    CapacityPlan,
+    Customer,
+    Deal,
+    DealEvent,
+    Order,
+    OrderEvent,
+    Product,
+    ProductionRecord,
+    SupportInteraction,
+)
+from app.models.workflow import Decision, DecisionHistory, Task
+
+__all__ = [
+    "Alert",
+    "FinanceRecord",
+    "ForecastRecord",
+    "HRSnapshot",
+    "Metric",
+    "MetricTarget",
+    "MetricValue",
+    "Department",
+    "RefreshToken",
+    "User",
+    "AuditLog",
+    "DataQualityIssue",
+    "DataQualityRun",
+    "IdempotencyKey",
+    "SourceRecord",
+    "SourceSyncRun",
+    "Campaign",
+    "CapacityPlan",
+    "Customer",
+    "Deal",
+    "DealEvent",
+    "Order",
+    "OrderEvent",
+    "Product",
+    "ProductionRecord",
+    "SupportInteraction",
+    "Decision",
+    "DecisionHistory",
+    "Task",
+]

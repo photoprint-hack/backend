@@ -6,6 +6,8 @@ dist/
 wheels/
 *.egg-info
 
+docs/
+
 # Virtual environments
 .venv
 
@@ -14,3 +16,10 @@ wheels/
 
 # Local agent coordination
 /agents.md
+/ASSUMPTIONS.local.md
+
+# Local test artifacts
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/

@@ -1,0 +1,2 @@
+entity_type,external_id,event_at,data
+customer,SAMPLE-CUSTOMER,2026-11-10T12:00:00Z,"{""name"":""Синтетический клиент импорта"",""customer_type"":""b2b"",""segment"":""corporate"",""acquisition_channel"":""website""}"

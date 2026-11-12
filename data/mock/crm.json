@@ -1,0 +1,15 @@
+{
+  "records": [
+    {
+      "entity_type": "customer",
+      "external_id": "SAMPLE-CUSTOMER",
+      "event_at": "2026-11-10T12:00:00Z",
+      "data": {
+        "name": "Синтетический клиент импорта",
+        "customer_type": "b2b",
+        "segment": "corporate",
+        "acquisition_channel": "website"
+      }
+    }
+  ]
+}

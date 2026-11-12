@@ -1,0 +1,56 @@
+{
+  "records": [
+    {
+      "entity_type": "finance_record",
+      "external_id": "SAMPLE-REVENUE",
+      "event_at": "2026-11-10T12:00:00Z",
+      "data": {
+        "department_id": {
+          "source": "erp",
+          "entity_type": "department",
+          "external_id": "SAMPLE-DEPT"
+        },
+        "product_id": {
+          "source": "erp",
+          "entity_type": "product",
+          "external_id": "SAMPLE-PRODUCT"
+        },
+        "order_id": {
+          "source": "erp",
+          "entity_type": "order",
+          "external_id": "SAMPLE-ORDER"
+        },
+        "record_date": "2026-11-10",
+        "record_type": "revenue",
+        "amount": 200,
+        "currency": "BYN"
+      }
+    },
+    {
+      "entity_type": "finance_record",
+      "external_id": "SAMPLE-COST",
+      "event_at": "2026-11-10T12:00:00Z",
+      "data": {
+        "department_id": {
+          "source": "erp",
+          "entity_type": "department",
+          "external_id": "SAMPLE-DEPT"
+        },
+        "product_id": {
+          "source": "erp",
+          "entity_type": "product",
+          "external_id": "SAMPLE-PRODUCT"
+        },
+        "order_id": {
+          "source": "erp",
+          "entity_type": "order",
+          "external_id": "SAMPLE-ORDER"
+        },
+        "record_date": "2026-11-10",
+        "record_type": "direct_cost",
+        "amount": 120,
+        "currency": "BYN"
+      }
+    }
+  ]
+}

@@ -1,0 +1,60 @@
+{
+  "records": [
+    {
+      "entity_type": "department",
+      "external_id": "SAMPLE-DEPT",
+      "event_at": "2026-11-10T12:00:00Z",
+      "data": {
+        "code": "sample_department",
+        "name": "Демо-подразделение импорта",
+        "is_active": true
+      }
+    },
+    {
+      "entity_type": "product",
+      "external_id": "SAMPLE-PRODUCT",
+      "event_at": "2026-11-10T12:00:00Z",
+      "data": {
+        "code": "sample_product",
+        "name": "Демо-продукт импорта",
+        "category": "photoproduct",
+        "standard_price": 100,
+        "currency": "BYN",
+        "standard_hours_per_unit": 0.25,
+        "is_active": true
+      }
+    },
+    {
+      "entity_type": "order",
+      "external_id": "SAMPLE-ORDER",
+      "event_at": "2026-11-10T12:00:00Z",
+      "data": {
+        "order_number": "IMPORT-DEMO-001",
+        "customer_id": {
+          "source": "crm",
+          "entity_type": "customer",
+          "external_id": "SAMPLE-CUSTOMER"
+        },
+        "product_id": {
+          "source": "erp",
+          "entity_type": "product",
+          "external_id": "SAMPLE-PRODUCT"
+        },
+        "department_id": {
+          "source": "erp",
+          "entity_type": "department",
+          "external_id": "SAMPLE-DEPT"
+        },
+        "channel": "website",
+        "quantity": 2,
+        "standard_hours_per_unit": 0.25,
+        "amount": 200,
+        "currency": "BYN",
+        "status": "completed",
+        "created_at": "2026-11-09T09:00:00Z",
+        "due_at": "2026-11-10T16:00:00Z",
+        "completed_at": "2026-11-10T11:00:00Z"
+      }
+    }
+  ]
+}

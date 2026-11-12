@@ -1,0 +1,2 @@
+entity_type,external_id,event_at,data
+hr_snapshot,SAMPLE-HR,2026-11-10T12:00:00Z,"{""department_id"":{""source"":""erp"",""entity_type"":""department"",""external_id"":""SAMPLE-DEPT""},""snapshot_date"":""2026-11-10"",""planned_headcount"":10,""actual_headcount"":9,""available_headcount"":8,""required_headcount"":10,""vacancies_count"":1,""absences_count"":1}"

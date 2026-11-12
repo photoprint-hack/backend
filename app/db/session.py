@@ -1,19 +1,26 @@
 from collections.abc import AsyncIterator
+from functools import lru_cache
 
-from sqlalchemy.ext.asyncio import (
-    AsyncSession,
-    async_sessionmaker,
-    create_async_engine,
-)
+from fastapi import Request
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker, create_async_engine
 
-from app.core.config import settings
-
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
-
-SessionFactory = async_sessionmaker(engine, expire_on_commit=False)
+from app.core.config import get_settings
 
 
-async def get_db() -> AsyncIterator[AsyncSession]:
-    """FastAPI dependency that yields a database session."""
-    async with SessionFactory() as session:
-        yield session
+@lru_cache
+def get_engine() -> AsyncEngine:
+    return create_async_engine(get_settings().db_url(), pool_pre_ping=True, connect_args={"timeout": 5})
+
+
+@lru_cache
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(get_engine(), expire_on_commit=False)
+
+
+async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
+    request.state.session_factory = get_session_factory()
+    async with get_session_factory()() as session:
+        try:
+            yield session
+        finally:
+            await session.rollback()
